@@ -66,8 +66,8 @@ Order biryani, pizza, dosas and more from your favourite restaurants with live o
 │   │   ├── routes/       #   API routes
 │   │   ├── utils/        #   helpers
 │   │   └── scripts/      #   database seeding
-│   ├── server.js
-│   └── .env.example
+│   └── server.js         #   Express entry point
+├── scripts/              # API test suite
 ├── screenshots/          # README images
 └── index.html
 ```
@@ -99,9 +99,10 @@ npm run dev        # http://localhost:5000
 
 | Role | Email | Password |
 |---|---|---|
-| Customer | `demo@foodrush.demo` | `demo123` |
-| Admin | `admin@foodrush.demo` | `admin123` |
-| Restaurant owner | `restaurant@foodrush.demo` | `restaurant123` |
+| Customer | `demo@foodrush.app` | `demo123` |
+| Admin | `admin@foodrush.app` | `admin123` |
+| Restaurant owner | `owner@foodrush.app` | `owner123` |
+| Delivery partner | `delivery@foodrush.app` | `delivery123` |
 
 ## 🔌 REST API
 
@@ -113,35 +114,52 @@ npm run dev        # http://localhost:5000
 | POST | `/api/auth/forgot-password` | Request reset link | — |
 | POST | `/api/auth/reset-password/:token` | Set new password | — |
 | GET | `/api/categories` | All categories | — |
-| GET | `/api/restaurants` | List + search/filter/sort | — |
-| GET | `/api/restaurants/:id` | Restaurant with menu | — |
-| GET | `/api/foods?q=` | Search dishes | — |
+| GET | `/api/restaurants` | List + search/filter/sort (`category`, `cuisine`, `rating`, `pureVeg`, `sort`) | — |
+| GET | `/api/restaurants/:slug` | Restaurant + menu grouped by section | — |
+| GET | `/api/foods?search=` | Search dishes across restaurants | — |
 | GET | `/api/coupons` | Available coupons | — |
-| POST | `/api/coupons/validate` | Apply coupon to a total | — |
+| POST | `/api/coupons/validate` | Preview a coupon's discount | — |
 | GET/POST | `/api/addresses` | List / create addresses | ✅ |
-| PUT/DELETE | `/api/addresses/:id` | Update / delete address | ✅ |
-| GET/POST | `/api/orders` | List my orders / place an order | ✅ |
-| GET | `/api/orders/:id` | Order details | ✅ |
-| GET/PUT | `/api/users/favorites` | Favourite restaurants & dishes | ✅ |
+| PATCH/DELETE | `/api/addresses/:id` | Update / delete address | ✅ |
+| GET/POST | `/api/orders` | List my orders / place an order (prices recomputed server-side) | ✅ |
+| GET | `/api/orders/:id` | Order details (owner / admin / restaurant / assigned delivery) | ✅ |
+| PATCH | `/api/orders/:id/status` | Advance status (role-gated) or cancel | ✅ |
+| POST | `/api/orders/:id/reorder` | Rebuild cart from a past order | ✅ |
+| GET | `/api/orders/admin/dashboard` | Users / restaurants / orders / revenue stats | admin |
+| GET | `/api/orders/restaurant/mine` | A restaurant owner's incoming orders | restaurant |
+| GET | `/api/orders/delivery/available` | Orders awaiting a delivery partner | delivery |
+| POST | `/api/orders/delivery/accept/:id` | Accept a delivery | delivery |
+| GET/POST | `/api/reviews` | List reviews / write one (after delivery) | ✅ |
+| POST | `/api/restaurants` · `/api/foods` | Admin CRUD for restaurants & foods | admin |
 
 ## 🧭 Roadmap
 
 - [x] **Phase 1** — Stable, tested frontend on GitHub
 - [x] **Phase 2–3** — Express API + MongoDB with seeded data
-- [ ] **Phase 4–5** — Wire the React app to the API (real auth, orders, addresses)
+- [x] **Phase 2–3** — Express API + MongoDB with seeded data
+- [x] **Phase 4** — Real auth: register / login / JWT / protected routes / forgot & reset password
+- [x] **Phase 5 (API)** — Orders, addresses, reorder, favourites & role-gated status pipeline
+- [x] **Phase 12 (API)** — Reviews with rating aggregation & delivered-order gate
+- [x] **Phase 13 (API)** — Automated endpoint test suite (`npm run test:api`, 65 checks)
+- [ ] **Phase 4–5 (UI)** — Wire the React app to the API (real auth, orders, addresses)
 - [ ] **Phase 6** — Admin dashboard (restaurant & food management, order pipeline)
 - [ ] **Phase 7** — Restaurant owner dashboard
 - [ ] **Phase 8** — Payment gateway (UPI / cards / net-banking, keep COD)
 - [ ] **Phase 9** — Real-time tracking with Socket.IO
 - [ ] **Phase 10** — Delivery partner dashboard
 - [ ] **Phase 11** — Maps & location services
-- [ ] **Phase 12** — Reviews & ratings
-- [ ] **Phase 13** — Automated tests (unit, component, API, E2E)
+- [ ] **Phase 13** — Frontend unit & component tests
 - [ ] **Phase 14** — Deploy (Vercel + Render/Railway + MongoDB Atlas)
 
 ## ✅ Testing
 
-The customer journey is verified end-to-end in headless Chrome: signup → search →
+**API** (`cd backend && npm run test:api`) — 65 checks across every endpoint:
+auth (register/login/phone login/forgot+reset), role permissions, coupon
+validation, order placement with server-side price recomputation (unit price +
+add-ons + customisations + GST + coupon), the full restaurant → delivery status
+pipeline, admin CRUD, and reviews.
+
+**Customer journey** — verified end-to-end in headless Chrome: signup → search →
 restaurant → customised dish → cart → coupon → checkout → order placement → live
 tracking → reorder, plus favourites persistence, veg mode, dark mode and mobile
 layout (390px, no horizontal overflow, no console errors).
