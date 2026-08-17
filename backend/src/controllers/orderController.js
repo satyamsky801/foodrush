@@ -269,6 +269,123 @@ export const getRestaurantOrders = asyncHandler(async (req, res) => {
   res.json({ success: true, count: orders.length, orders });
 });
 
+/**
+ * GET /api/orders/restaurant/analytics — restaurant owner: sales overview.
+ * Daily orders/revenue (14 days), popular foods, status counts, AOV.
+ */
+export const getRestaurantAnalytics = asyncHandler(async (req, res) => {
+  if (!req.user.restaurant) throw ApiError.forbidden('Your account is not linked to a restaurant.');
+  const restaurantId = req.user.restaurant;
+  const days = 14;
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+  since.setDate(since.getDate() - (days - 1));
+
+  // Status counts (today + all-time), revenue, AOV, delivered count, menu size.
+  const [statusCounts, revenueAgg, aovAgg, deliveredAgg, menuCount] = await Promise.all([
+    Order.aggregate([
+      { $match: { restaurant: restaurantId } },
+      { $group: { _id: '$orderStatus', count: { $sum: 1 } } },
+    ]),
+    Order.aggregate([
+      { $match: { restaurant: restaurantId, orderStatus: { $ne: 'cancelled' } } },
+      { $group: { _id: null, revenue: { $sum: '$breakdown.grandTotal' }, orders: { $sum: 1 } } },
+    ]),
+    Order.aggregate([
+      { $match: { restaurant: restaurantId, orderStatus: { $ne: 'cancelled' } } },
+      { $group: { _id: null, aov: { $avg: '$breakdown.grandTotal' } } },
+    ]),
+    Order.countDocuments({ restaurant: restaurantId, orderStatus: 'delivered' }),
+    Food.countDocuments({ restaurant: restaurantId }),
+  ]);
+
+  const byStatus = {};
+  for (const s of statusCounts) byStatus[s._id] = s.count;
+
+  // Today's snapshot (local calendar day).
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const [todayOrders, todayRevenue] = await Promise.all([
+    Order.countDocuments({ restaurant: restaurantId, createdAt: { $gte: todayStart }, orderStatus: { $ne: 'cancelled' } }),
+    Order.aggregate([
+      {
+        $match: {
+          restaurant: restaurantId,
+          createdAt: { $gte: todayStart },
+          orderStatus: { $ne: 'cancelled' },
+        },
+      },
+      { $group: { _id: null, revenue: { $sum: '$breakdown.grandTotal' } } },
+    ]),
+  ]);
+
+  // Daily series (last 14 days).
+  const daily = await Order.aggregate([
+    {
+      $match: {
+        restaurant: restaurantId,
+        createdAt: { $gte: since },
+        orderStatus: { $ne: 'cancelled' },
+      },
+    },
+    {
+      $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+        orders: { $sum: 1 },
+        revenue: { $sum: '$breakdown.grandTotal' },
+      },
+    },
+    { $sort: { _id: 1 } },
+  ]);
+
+  const series = [];
+  for (let i = 0; i < days; i += 1) {
+    const d = new Date(since);
+    d.setDate(since.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    const match = daily.find((x) => x._id === key);
+    series.push({
+      date: key,
+      label: d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+      orders: match?.orders || 0,
+      revenue: match?.revenue || 0,
+    });
+  }
+
+  // Popular foods by quantity (excluding cancelled).
+  const popularFoods = await Order.aggregate([
+    { $match: { restaurant: restaurantId, orderStatus: { $ne: 'cancelled' } } },
+    { $unwind: '$items' },
+    {
+      $group: {
+        _id: '$items.name',
+        qty: { $sum: '$items.quantity' },
+        revenue: { $sum: { $multiply: ['$items.unitPrice', '$items.quantity'] } },
+      },
+    },
+    { $sort: { qty: -1 } },
+    { $limit: 6 },
+  ]);
+
+  const revenue = revenueAgg[0]?.revenue || 0;
+  const orderCount = revenueAgg[0]?.orders || 0;
+
+  res.json({
+    success: true,
+    analytics: {
+      today: { orders: todayOrders, revenue: todayRevenue[0]?.revenue || 0 },
+      byStatus,
+      totalOrders: orderCount,
+      revenue,
+      aov: aovAgg[0]?.aov ? Math.round(aovAgg[0].aov) : 0,
+      delivered: deliveredAgg,
+      menuCount,
+      daily: series,
+      popularFoods: popularFoods.map((p) => ({ name: p._id, qty: p.qty, revenue: p.revenue })),
+    },
+  });
+});
+
 /** GET /api/orders/delivery/available — open orders a delivery partner can accept */
 export const getAvailableDeliveries = asyncHandler(async (req, res) => {
   const orders = await Order.find({

@@ -16,6 +16,7 @@ Order biryani, pizza, dosas and more from your favourite restaurants with live o
 |---|---|
 | **Customer app** | 11 pages: home, search & filters, restaurant menu, food customisation, cart, checkout, live order tracking, profile, orders, login |
 | **Admin dashboard** | `/admin` — live stats & charts, users (role management), restaurants, foods, categories, coupons, order pipeline, reviews |
+| **Restaurant dashboard** | `/restaurant` — owner-only: incoming orders (accept → preparing → ready), menu management with customisations & add-ons, profile, reviews, sales analytics |
 | **Fully API-connected** | Restaurants, menus, auth, addresses, coupons, orders, tracking & reviews all read/write MongoDB through the Express API — no mock data in the UI |
 | **Dark mode** | Class-based Tailwind theme with a pre-paint script (no flash), follows your system preference |
 | **Coupons** | `WELCOME50` (50% off up to ₹100), `FOOD20` (20% off up to ₹150), `FREEDEL` (free delivery) — validated by the backend |
@@ -137,6 +138,9 @@ states with retry when the API is unreachable.
 | POST | `/api/orders/:id/reorder` | Rebuild cart from a past order | ✅ |
 | GET | `/api/orders/admin/dashboard` | Users / restaurants / orders / revenue stats | admin |
 | GET | `/api/orders/restaurant/mine` | A restaurant owner's incoming orders | restaurant |
+| GET | `/api/orders/restaurant/analytics` | Daily orders/revenue, popular foods, AOV for the owner's restaurant | restaurant |
+| GET/PATCH | `/api/restaurants/me` | Owner's own profile (derived from JWT — never the URL) | restaurant |
+| POST/PATCH/DELETE | `/api/foods` | Food CRUD — admins any, owners only their own (enforced server-side) | admin / restaurant |
 | GET | `/api/orders/delivery/available` | Orders awaiting a delivery partner | delivery |
 | POST | `/api/orders/delivery/accept/:id` | Accept a delivery | delivery |
 | GET/POST | `/api/reviews` | List reviews / write one (after delivery) | ✅ |
@@ -160,7 +164,7 @@ states with retry when the API is unreachable.
 - [x] **Phase 13 (API)** — Automated endpoint test suite (`npm run test:api`, 65 checks)
 - [x] **Phase 4–5 (UI)** — Full API connection: real auth (JWT + refresh restore), restaurants, menus, addresses, coupons, orders, tracking & reviews
 - [x] **Phase 6** — Admin dashboard at `/admin` (stats & charts, users, restaurants, foods, categories, coupons, order pipeline, reviews)
-- [ ] **Phase 7** — Restaurant owner dashboard
+- [x] **Phase 7** — Restaurant dashboard at `/restaurant` (owner-scoped orders & menu, profile, reviews, sales analytics)
 - [ ] **Phase 8** — Payment gateway (UPI / cards / net-banking, keep COD)
 - [ ] **Phase 9** — Real-time tracking with Socket.IO
 - [ ] **Phase 10** — Delivery partner dashboard
@@ -188,6 +192,15 @@ dashboard stat cards & charts, users list, add-restaurant, foods & categories
 lists, add-category, coupons, orders, reviews, mobile layout (390px, no
 overflow), dark-mode toggle, and that non-admin users are redirected away from
 `/admin`. 19/19 checks pass with zero console errors.
+
+**Restaurant dashboard** — verified end-to-end in headless Chrome as
+`owner@foodrush.app` (linked to Spice Garden): dashboard stats & charts,
+accept → preparing → ready order pipeline on a fresh API-placed order, add dish
++ availability toggle, profile save, reviews, sales analytics, mobile layout
+(390px, no overflow), dark-mode toggle, and role guards (customer redirected
+away from `/restaurant`, admin unaffected). 27/27 checks pass with zero console
+errors. Ownership is also enforced at the API level: an owner cannot create,
+update or delete another restaurant's foods (verified with 403s).
 
 > Note: `npm run test:api` asserts on exact database state (e.g. "reviews empty",
 > "1 seeded address"), so restart the backend (fresh in-memory DB) before running

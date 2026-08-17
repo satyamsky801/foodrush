@@ -111,6 +111,11 @@ export default function Navbar() {
                       <LayoutDashboard size={16} className="text-zinc-400 dark:text-zinc-500" /> Admin Dashboard
                     </Link>
                   )}
+                  {user.role === 'restaurant' && (
+                    <Link to="/restaurant" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                      <LayoutDashboard size={16} className="text-zinc-400 dark:text-zinc-500" /> Restaurant Dashboard
+                    </Link>
+                  )}
                   <button
                     onClick={() => {
                       setMenuOpen(false);

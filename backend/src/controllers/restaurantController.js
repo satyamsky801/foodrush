@@ -96,3 +96,33 @@ export const getAllRestaurants = asyncHandler(async (req, res) => {
   const restaurants = await Restaurant.find().sort({ createdAt: -1 }).lean();
   res.json({ success: true, count: restaurants.length, restaurants });
 });
+
+/** GET /api/restaurants/me — restaurant owner: their own profile */
+export const getMyRestaurant = asyncHandler(async (req, res) => {
+  if (!req.user.restaurant) throw ApiError.forbidden('Your account is not linked to a restaurant.');
+  const restaurant = await Restaurant.findById(req.user.restaurant).lean();
+  if (!restaurant) throw ApiError.notFound('Restaurant not found.');
+  res.json({ success: true, restaurant });
+});
+
+/** PATCH /api/restaurants/me — restaurant owner: update their own profile */
+export const updateMyRestaurant = asyncHandler(async (req, res) => {
+  if (!req.user.restaurant) throw ApiError.forbidden('Your account is not linked to a restaurant.');
+
+  const allowed = [
+    'name', 'image', 'cuisine', 'deliveryTime', 'deliveryMin', 'deliveryFee',
+    'freeDeliveryAbove', 'priceForTwo', 'pureVeg', 'area', 'address', 'offers',
+    'isActive',
+  ];
+  const updates = {};
+  for (const key of allowed) {
+    if (key in req.body) updates[key] = req.body[key];
+  }
+
+  const restaurant = await Restaurant.findByIdAndUpdate(req.user.restaurant, updates, {
+    new: true,
+    runValidators: true,
+  });
+  if (!restaurant) throw ApiError.notFound('Restaurant not found.');
+  res.json({ success: true, restaurant });
+});

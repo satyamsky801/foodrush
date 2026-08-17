@@ -7,6 +7,7 @@ import {
   reorder,
   getAllOrders,
   getRestaurantOrders,
+  getRestaurantAnalytics,
   getAvailableDeliveries,
   acceptDelivery,
   getMyDeliveries,
@@ -27,6 +28,7 @@ router.get('/admin/all', restrictTo('admin'), getAllOrders);
 
 // Restaurant owner
 router.get('/restaurant/mine', restrictTo('restaurant'), getRestaurantOrders);
+router.get('/restaurant/analytics', restrictTo('restaurant'), getRestaurantAnalytics);
 
 // Delivery partner
 router.get('/delivery/available', restrictTo('delivery'), getAvailableDeliveries);

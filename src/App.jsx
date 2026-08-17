@@ -23,11 +23,18 @@ import AdminCategoriesPage from './pages/admin/AdminCategoriesPage';
 import AdminCouponsPage from './pages/admin/AdminCouponsPage';
 import AdminOrdersPage from './pages/admin/AdminOrdersPage';
 import AdminReviewsPage from './pages/admin/AdminReviewsPage';
+import RestaurantLayout from './pages/restaurant/RestaurantLayout';
+import RestaurantDashboardPage from './pages/restaurant/RestaurantDashboardPage';
+import RestaurantOrdersPage from './pages/restaurant/RestaurantOrdersPage';
+import RestaurantFoodsPage from './pages/restaurant/RestaurantFoodsPage';
+import RestaurantProfilePage from './pages/restaurant/RestaurantProfilePage';
+import RestaurantReviewsPage from './pages/restaurant/RestaurantReviewsPage';
+import RestaurantAnalyticsPage from './pages/restaurant/RestaurantAnalyticsPage';
 import { useAuth } from './context/AuthContext';
 import { Skeleton } from './components/LoadingSkeleton';
 
-/** Guards a route so only users with the given role can enter. */
-function RoleRoute({ role, children }) {
+/** Guards a route so only users with one of the given roles can enter. */
+function RoleRoute({ roles, children }) {
   const { user, initializing } = useAuth();
   if (initializing) {
     return (
@@ -37,7 +44,7 @@ function RoleRoute({ role, children }) {
     );
   }
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== role) return <Navigate to="/" replace />;
+  if (!roles.includes(user.role)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -57,10 +64,28 @@ export default function App() {
       <ScrollToTop />
       <Routes location={location}>
         {/* Admin dashboard — own layout, no customer chrome */}
+        {/* Restaurant dashboard — own layout, no customer chrome */}
+        <Route
+          path="/restaurant"
+          element={
+            <RoleRoute roles={['restaurant']}>
+              <RestaurantLayout />
+            </RoleRoute>
+          }
+        >
+          <Route index element={<RestaurantDashboardPage />} />
+          <Route path="orders" element={<RestaurantOrdersPage />} />
+          <Route path="foods" element={<RestaurantFoodsPage />} />
+          <Route path="profile" element={<RestaurantProfilePage />} />
+          <Route path="reviews" element={<RestaurantReviewsPage />} />
+          <Route path="analytics" element={<RestaurantAnalyticsPage />} />
+        </Route>
+
+        {/* Admin dashboard — own layout, no customer chrome */}
         <Route
           path="/admin"
           element={
-            <RoleRoute role="admin">
+            <RoleRoute roles={['admin']}>
               <AdminLayout />
             </RoleRoute>
           }

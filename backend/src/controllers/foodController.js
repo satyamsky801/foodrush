@@ -34,25 +34,58 @@ export const getFoodById = asyncHandler(async (req, res) => {
   res.json({ success: true, food });
 });
 
-/** POST /api/foods — admin/restaurant owner */
+/**
+ * Resolve the restaurant a food must belong to for the current user:
+ * admins may pass any restaurant; restaurant owners are locked to their own.
+ */
+const resolveRestaurantScope = (req, bodyRestaurant) => {
+  if (req.user.role === 'restaurant') {
+    if (!req.user.restaurant) throw ApiError.forbidden('Your account is not linked to a restaurant.');
+    return String(req.user.restaurant);
+  }
+  return bodyRestaurant;
+};
+
+/** Ensure a food belongs to the caller's restaurant (owners only). */
+const assertOwnerOfFood = async (req, food) => {
+  if (req.user.role !== 'restaurant') return;
+  if (String(food.restaurant) !== String(req.user.restaurant)) {
+    throw ApiError.forbidden('This food item does not belong to your restaurant.');
+  }
+};
+
+/** POST /api/foods — admin (any restaurant) / restaurant owner (own only) */
 export const createFood = asyncHandler(async (req, res) => {
-  const food = await Food.create(req.body);
+  const restaurant = resolveRestaurantScope(req, req.body.restaurant);
+  if (!restaurant) throw ApiError.badRequest('restaurant is required.');
+
+  const food = await Food.create({ ...req.body, restaurant });
   res.status(201).json({ success: true, food });
 });
 
-/** PATCH /api/foods/:id — admin/restaurant owner */
+/** PATCH /api/foods/:id — admin (any) / restaurant owner (own only) */
 export const updateFood = asyncHandler(async (req, res) => {
-  const food = await Food.findByIdAndUpdate(req.params.id, req.body, {
+  const existing = await Food.findById(req.params.id);
+  if (!existing) throw ApiError.notFound('Food item not found.');
+  await assertOwnerOfFood(req, existing);
+
+  const updates = { ...req.body };
+  // Owners may never move a dish to another restaurant.
+  if (req.user.role === 'restaurant') delete updates.restaurant;
+
+  const food = await Food.findByIdAndUpdate(req.params.id, updates, {
     new: true,
     runValidators: true,
   });
-  if (!food) throw ApiError.notFound('Food item not found.');
   res.json({ success: true, food });
 });
 
-/** DELETE /api/foods/:id — admin/restaurant owner */
+/** DELETE /api/foods/:id — admin (any) / restaurant owner (own only) */
 export const deleteFood = asyncHandler(async (req, res) => {
-  const food = await Food.findByIdAndDelete(req.params.id);
-  if (!food) throw ApiError.notFound('Food item not found.');
+  const existing = await Food.findById(req.params.id);
+  if (!existing) throw ApiError.notFound('Food item not found.');
+  await assertOwnerOfFood(req, existing);
+
+  await Food.findByIdAndDelete(req.params.id);
   res.json({ success: true, message: 'Food item deleted.' });
 });
