@@ -8,13 +8,15 @@ import PriceSummary from '../components/PriceSummary';
 import Modal from '../components/Modal';
 import EmptyState from '../components/EmptyState';
 import AppImage from '../components/AppImage';
+import { useFetch } from '../hooks/useFetch';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { useAddresses } from '../context/AddressContext';
 import { useOrders } from '../context/OrdersContext';
 import { useToast } from '../context/ToastContext';
-import { getRestaurant } from '../data/restaurants';
-import { getCoupon } from '../data/coupons';
+import { restaurantApi } from '../api/restaurantApi';
+import { couponApi } from '../api/couponApi';
+import { mapRestaurant } from '../api/normalizers';
 import { priceBreakdown } from '../utils/pricing';
 import { formatINR } from '../utils/format';
 import { categoryEmoji } from '../utils/images';
@@ -51,7 +53,25 @@ export default function CheckoutPage() {
   const [formError, setFormError] = useState('');
   const [placing, setPlacing] = useState(false);
 
-  const restaurant = getRestaurant(cart.restaurantId);
+  // Live restaurant details for the delivery fee estimate + links.
+  const restaurantFetch = useFetch(
+    async () => {
+      if (!cart.restaurantSlug) return null;
+      const { restaurant } = await restaurantApi.getBySlug(cart.restaurantSlug);
+      return mapRestaurant(restaurant);
+    },
+    [cart.restaurantSlug],
+    { enabled: Boolean(cart.restaurantSlug) }
+  );
+
+  const restaurant = restaurantFetch.data || {
+    id: cart.restaurantSlug,
+    name: cart.restaurantName,
+    image: cart.restaurantImage,
+    deliveryFee: 0,
+    freeDeliveryAbove: null,
+  };
+
   const breakdown = useMemo(
     () => priceBreakdown(cart, restaurant, couponCode),
     [cart, restaurant, couponCode]
@@ -87,14 +107,19 @@ export default function CheckoutPage() {
 
   const selectedAddress = addresses.find((a) => a.id === selectedAddressId) || defaultAddress;
 
-  const applyCoupon = (code) => {
-    const result = priceBreakdown(cart, restaurant, code);
-    if (result.error) {
-      setCouponError(result.error);
-      return;
-    }
+  // Coupon codes are validated by the backend.
+  const applyCoupon = async (code) => {
     setCouponError('');
-    setCouponCode(code);
+    try {
+      await couponApi.validate({
+        code,
+        itemTotal: breakdown.total,
+        deliveryFee: breakdown.deliveryFee,
+      });
+      setCouponCode(code);
+    } catch (e) {
+      setCouponError(e.message);
+    }
   };
 
   const openAddAddress = () => {
@@ -111,7 +136,7 @@ export default function CheckoutPage() {
     setAddressModal(true);
   };
 
-  const saveAddress = () => {
+  const saveAddress = async () => {
     const { type, name, phone, street, area, city, pincode } = addressForm;
     if (!name.trim() || !phone.trim() || !street.trim() || !area.trim() || !city.trim() || !pincode.trim()) {
       setFormError('Please fill in all the required fields.');
@@ -121,15 +146,13 @@ export default function CheckoutPage() {
       setFormError('Pincode should be a 6-digit number.');
       return;
     }
-    if (editingAddress) {
-      updateAddress(editingAddress.id, addressForm);
-    } else {
-      addAddress(addressForm);
-    }
-    setAddressModal(false);
+    const res = editingAddress
+      ? await updateAddress(editingAddress.id, addressForm)
+      : await addAddress(addressForm);
+    if (res.ok) setAddressModal(false);
   };
 
-  const placeOrderNow = () => {
+  const placeOrderNow = async () => {
     // Validation
     if (!selectedAddress) {
       toast('Please add a delivery address.', 'error');
@@ -152,21 +175,34 @@ export default function CheckoutPage() {
     }
 
     setPlacing(true);
-    setTimeout(() => {
-      const coupon = getCoupon(couponCode);
-      const order = placeOrder({
-        restaurant,
-        items: cart.items,
-        address: selectedAddress,
+    try {
+      // Only identifiers go to the server — it recomputes every price.
+      const order = await placeOrder({
+        restaurantId: cart.restaurantId,
+        addressId: selectedAddress.id,
         paymentMethod: method,
-        coupon,
-        breakdown,
+        couponCode: couponCode || undefined,
+        items: cart.items.map((it) => ({
+          foodId: it.id,
+          quantity: it.quantity,
+          addons: (it.addons || []).map((a) => ({ id: a.id, name: a.name })),
+          customizations: (it.customizations || []).map((c) => ({
+            id: c.id,
+            name: c.name,
+            optionId: c.optionId,
+            optionName: c.optionName,
+          })),
+        })),
       });
-      clearCart();
-      setPlacing(false);
+
+      clearCart(); // Only after the order exists in MongoDB.
       toast('Order placed successfully! 🎉');
-      navigate(`/order/${order.id}`, { state: { justPlaced: true } });
-    }, 900);
+      navigate(`/order/${order._id}`, { state: { justPlaced: true } });
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setPlacing(false);
+    }
   };
 
   return (
@@ -311,7 +347,7 @@ export default function CheckoutPage() {
             </button>
             <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-zinc-400 dark:text-zinc-500">
               <ShieldCheck size={14} className="text-emerald-500" />
-              Demo checkout — no real payment is processed.
+              Demo payments — no real money is charged. The total is confirmed by the server.
             </p>
           </div>
         </div>

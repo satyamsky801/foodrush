@@ -1,100 +1,151 @@
-import { createContext, useCallback, useContext, useMemo } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { STORAGE_KEYS } from '../data/constants';
-import { uid } from '../utils/format';
+import { authApi } from '../api/authApi';
+import { setToken, getToken } from '../api/apiClient';
 import { useToast } from './ToastContext';
 
 const AuthContext = createContext(null);
 
 export const useAuth = () => useContext(AuthContext);
 
-// Demo-only "Google" profile used by the simulated Google login.
-const GOOGLE_DEMO_USER = { name: 'Aarav Mehta', email: 'aarav.mehta@gmail.com', phone: '9876543210' };
+// Demo "Continue with Google" account. There is no real OAuth provider wired
+// up, so the button registers/logs into this account via the API on first use.
+const GOOGLE_DEMO_EMAIL = 'aarav.mehta@gmail.com';
+const GOOGLE_DEMO_PHONE = '9876543210';
+const GOOGLE_DEMO_PASSWORD = 'google123';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useLocalStorage(STORAGE_KEYS.user, null);
-  const [users, setUsers] = useLocalStorage(STORAGE_KEYS.users, []);
+  const [initializing, setInitializing] = useState(true);
   const toast = useToast();
 
-  const persistUser = useCallback(
-    (u) => {
-      setUsers((prev) => {
-        const exists = prev.some((x) => x.id === u.id);
-        return exists ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u];
-      });
-      setUser({ id: u.id, name: u.name, email: u.email, phone: u.phone, provider: u.provider });
-    },
-    [setUser, setUsers]
-  );
+  // Restore the session after a refresh: validate the stored JWT via /auth/me.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const token = getToken();
+      if (!token) {
+        if (!cancelled) setInitializing(false);
+        return;
+      }
+      try {
+        const { user: me } = await authApi.me();
+        if (!cancelled) setUser(me);
+      } catch {
+        // Token invalid/expired — the api client already cleared it.
+        if (!cancelled) setUser(null);
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setUser]);
+
+  // Any API 401 (expired token mid-session) logs the user out app-wide.
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener('foodrush:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('foodrush:unauthorized', onUnauthorized);
+  }, [setUser]);
 
   const login = useCallback(
-    (identifier, password) => {
-      const id = String(identifier || '').trim().toLowerCase();
-      const match = users.find(
-        (u) => u.email.toLowerCase() === id || u.phone === id
-      );
-      if (!match) return { error: 'No account found with this email/phone.' };
-      if (match.password !== password) return { error: 'Incorrect password. Please try again.' };
-      persistUser({ ...match, password: undefined });
-      toast(`Welcome back, ${match.name.split(' ')[0]}! 👋`);
-      return { ok: true };
+    async (identifier, password) => {
+      try {
+        const { token, user: loggedIn } = await authApi.login(identifier, password);
+        setToken(token);
+        setUser(loggedIn);
+        toast(`Welcome back, ${loggedIn.name.split(' ')[0]}! 👋`);
+        return { ok: true };
+      } catch (e) {
+        return { error: e.message };
+      }
     },
-    [users, persistUser, toast]
+    [setUser, toast]
   );
 
   const signup = useCallback(
-    ({ name, email, phone, password }) => {
-      const cleanEmail = String(email || '').trim().toLowerCase();
-      if (users.some((u) => u.email.toLowerCase() === cleanEmail)) {
-        return { error: 'An account with this email already exists. Try logging in.' };
+    async ({ name, email, phone, password }) => {
+      try {
+        const { token, user: created } = await authApi.register({
+          name,
+          email,
+          phone,
+          password,
+        });
+        setToken(token);
+        setUser(created);
+        toast(`Account created. Welcome to FoodRush, ${created.name.split(' ')[0]}! 🎉`);
+        return { ok: true };
+      } catch (e) {
+        return { error: e.message };
       }
-      if (users.some((u) => u.phone === phone)) {
-        return { error: 'An account with this phone number already exists.' };
-      }
-      const newUser = { id: uid('u_'), name: name.trim(), email: cleanEmail, phone, password, provider: 'email' };
-      persistUser(newUser);
-      toast(`Account created. Welcome to FoodRush, ${name.split(' ')[0]}! 🎉`);
-      return { ok: true };
     },
-    [users, persistUser, toast]
+    [setUser, toast]
   );
 
-  const googleLogin = useCallback(() => {
-    const existing = users.find((u) => u.email === GOOGLE_DEMO_USER.email);
-    persistUser(existing || { id: uid('u_'), ...GOOGLE_DEMO_USER, provider: 'google' });
-    toast(`Signed in with Google — ${GOOGLE_DEMO_USER.name}`);
-    return { ok: true };
-  }, [users, persistUser, toast]);
+  /** Demo Google sign-in — provisions the demo account on first use. */
+  const googleLogin = useCallback(async () => {
+    try {
+      const res = await authApi.login(GOOGLE_DEMO_EMAIL, GOOGLE_DEMO_PASSWORD);
+      setToken(res.token);
+      setUser(res.user);
+      toast(`Signed in with Google — ${res.user.name}`);
+      return { ok: true };
+    } catch {
+      // Account doesn't exist yet — create it, then sign in.
+      try {
+        const res = await authApi.register({
+          name: 'Aarav Mehta',
+          email: GOOGLE_DEMO_EMAIL,
+          phone: GOOGLE_DEMO_PHONE,
+          password: GOOGLE_DEMO_PASSWORD,
+        });
+        setToken(res.token);
+        setUser(res.user);
+        toast(`Signed in with Google — ${res.user.name}`);
+        return { ok: true };
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+  }, [setUser, toast]);
 
   const logout = useCallback(() => {
+    setToken(null);
     setUser(null);
     toast('You have been logged out.', 'info');
   }, [setUser, toast]);
 
   const updateProfile = useCallback(
-    ({ name, phone }) => {
-      setUser((prev) => {
-        if (!prev) return prev;
-        const updated = { ...prev, name, phone };
-        setUsers((all) => all.map((u) => (u.id === updated.id ? { ...u, name, phone } : u)));
-        return updated;
-      });
-      toast('Profile updated');
+    async ({ name, phone }) => {
+      try {
+        const { user: updated } = await authApi.updateProfile({ name, phone });
+        setUser(updated);
+        toast('Profile updated');
+        return { ok: true };
+      } catch (e) {
+        toast(e.message, 'error');
+        return { error: e.message };
+      }
     },
-    [setUser, setUsers, toast]
+    [setUser, toast]
   );
 
   const value = useMemo(
     () => ({
       user,
       isAuthenticated: Boolean(user),
+      initializing,
       login,
       signup,
       googleLogin,
       logout,
       updateProfile,
     }),
-    [user, login, signup, googleLogin, logout, updateProfile]
+    [user, initializing, login, signup, googleLogin, logout, updateProfile]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

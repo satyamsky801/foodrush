@@ -5,7 +5,10 @@ import AppImage from '../components/AppImage';
 import Rating from '../components/Rating';
 import VegIndicator from '../components/VegIndicator';
 import EmptyState from '../components/EmptyState';
-import { getFood, getRestaurant } from '../data/restaurants';
+import { SkeletonRow } from '../components/LoadingSkeleton';
+import { useFetch } from '../hooks/useFetch';
+import { foodApi } from '../api/foodApi';
+import { mapFood } from '../api/normalizers';
 import { useCart } from '../context/CartContext';
 import { formatINR } from '../utils/format';
 import { categoryEmoji } from '../utils/images';
@@ -13,21 +16,34 @@ import { categoryEmoji } from '../utils/images';
 export default function FoodDetailsPage() {
   const { restaurantId, foodId } = useParams();
   const navigate = useNavigate();
-  const food = getFood(restaurantId, foodId);
-  const restaurant = getRestaurant(restaurantId);
   const { addItem } = useCart();
 
-  // Default each required customization to its first option.
-  const [customizations, setCustomizations] = useState(() =>
-    Object.fromEntries(
-      (food?.customizations || []).map((c) => [
-        c.id,
-        c.required ? c.options[0]?.id : null,
-      ])
-    )
+  // GET /api/foods/:id — the food arrives with its restaurant populated.
+  const { data, loading, error, refetch } = useFetch(
+    async () => {
+      const { food } = await foodApi.getById(foodId);
+      return { food: mapFood(food, food.restaurant) };
+    },
+    [foodId]
   );
+
+  const food = data?.food || null;
+
+  // Default each required customization to its first option.
+  const [customizations, setCustomizations] = useState(() => ({}));
   const [selectedAddons, setSelectedAddons] = useState([]);
   const [quantity, setQuantity] = useState(1);
+
+  // Initialise customization selections once the food loads.
+  const initialized = useMemo(() => {
+    if (!food || Object.keys(customizations).length > 0) return false;
+    setCustomizations(
+      Object.fromEntries(
+        (food.customizations || []).map((c) => [c.id, c.required ? c.options[0]?.id : null])
+      )
+    );
+    return true;
+  }, [food, customizations]);
 
   const priceBreakdown = useMemo(() => {
     const addonTotal = (food?.addons || [])
@@ -40,16 +56,29 @@ export default function FoodDetailsPage() {
     return { addonTotal, customTotal, unitPrice: (food?.price || 0) + addonTotal + customTotal };
   }, [food, selectedAddons, customizations]);
 
-  if (!food || !restaurant) {
+  if (loading) {
+    return (
+      <div className="container-app py-10">
+        <div className="grid gap-8 lg:grid-cols-2">
+          <div className="aspect-[4/3] w-full rounded-3xl skeleton" />
+          <div className="space-y-4">
+            <SkeletonRow />
+            <SkeletonRow />
+            <SkeletonRow />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !food) {
     return (
       <div className="container-app py-20">
-        <EmptyState
-          icon="🍽️"
-          title="Dish not found"
-          description="This dish may have been removed from the menu."
-          actionLabel="Back to restaurants"
-          actionTo="/restaurants"
-        />
+        {error ? (
+          <EmptyState icon="📡" title="Couldn't load this dish" description={error.message} actionLabel="Try again" onAction={refetch} />
+        ) : (
+          <EmptyState icon="🍽️" title="Dish not found" description="This dish may have been removed from the menu." actionLabel="Back to restaurants" actionTo="/restaurants" />
+        )}
       </div>
     );
   }
@@ -75,10 +104,10 @@ export default function FoodDetailsPage() {
   return (
     <div className="container-app py-6 sm:py-10">
       <Link
-        to={`/restaurant/${restaurant.id}`}
+        to={`/restaurant/${restaurantId}`}
         className="mb-5 inline-flex items-center gap-1.5 text-sm font-bold text-zinc-600 transition-colors hover:text-brand-600 dark:text-zinc-300"
       >
-        <ArrowLeft size={16} /> Back to {restaurant.name}
+        <ArrowLeft size={16} /> Back to {food.restaurantName || 'restaurant'}
       </Link>
 
       <div className="grid gap-8 lg:grid-cols-2">
@@ -105,7 +134,7 @@ export default function FoodDetailsPage() {
           <h1 className="font-display text-2xl font-extrabold text-zinc-900 dark:text-zinc-50 sm:text-3xl">{food.name}</h1>
           <div className="mt-2 flex items-center gap-3">
             <Rating value={food.rating} count={food.ratingCount} />
-            <span className="text-xs text-zinc-400 dark:text-zinc-500">from {restaurant.name}</span>
+            <span className="text-xs text-zinc-400 dark:text-zinc-500">from {food.restaurantName}</span>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300 sm:text-base">{food.description}</p>
 
@@ -229,7 +258,7 @@ export default function FoodDetailsPage() {
           </div>
 
           <p className="mt-4 text-xs text-zinc-400 dark:text-zinc-500">
-            By adding this item you agree to FoodRush's fair pricing &amp; delivery policies.
+            Prices are confirmed by the kitchen at checkout.
           </p>
         </div>
       </div>

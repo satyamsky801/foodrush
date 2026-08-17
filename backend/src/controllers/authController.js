@@ -54,6 +54,22 @@ export const me = asyncHandler(async (req, res) => {
   res.json({ success: true, user: user.toSafeJSON() });
 });
 
+/** PATCH /api/auth/me — update the logged-in user's name/phone */
+export const updateProfile = asyncHandler(async (req, res) => {
+  const { name, phone } = req.body;
+  const updates = {};
+  if (name?.trim()) updates.name = name.trim();
+  if (phone?.trim()) updates.phone = phone.trim();
+  if (!Object.keys(updates).length) throw ApiError.badRequest('Nothing to update.');
+  if (updates.phone && !/^\d{10}$/.test(updates.phone)) {
+    throw ApiError.badRequest('Phone number must be 10 digits.');
+  }
+
+  Object.assign(req.user, updates);
+  await req.user.save();
+  res.json({ success: true, user: req.user.toSafeJSON() });
+});
+
 /**
  * POST /api/auth/forgot-password
  * In development the reset token is returned so the flow works without an

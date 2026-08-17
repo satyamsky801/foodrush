@@ -1,7 +1,7 @@
-import { Bike, Check, ChefHat, Home, PackageCheck, UtensilsCrossed } from 'lucide-react';
+import { Bike, Check, ChefHat, ClipboardCheck, Home, PackageCheck, UtensilsCrossed } from 'lucide-react';
 import { ORDER_STATUSES } from '../data/constants';
 
-const ICONS = [PackageCheck, ChefHat, UtensilsCrossed, Check, Bike, Home];
+const ICONS = [PackageCheck, ChefHat, UtensilsCrossed, ClipboardCheck, Check, Bike, Home];
 
 export default function OrderStatus({ status }) {
   const currentIndex = ORDER_STATUSES.findIndex((s) => s.id === status);

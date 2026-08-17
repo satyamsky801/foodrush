@@ -1,53 +1,102 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { Bike, CheckCircle2, Clock, MapPin, Phone, ReceiptText, Star } from 'lucide-react';
 import OrderStatus from '../components/OrderStatus';
 import AppImage from '../components/AppImage';
 import EmptyState from '../components/EmptyState';
-import { useOrders, statusForOrder } from '../context/OrdersContext';
-import { ORDER_STATUSES, STAGE_DURATION_MS } from '../data/constants';
-import { formatINR, formatTime } from '../utils/format';
+import { useFetch } from '../hooks/useFetch';
+import { orderApi } from '../api/orderApi';
+import { reviewApi } from '../api/reviewApi';
+import { mapOrder } from '../api/normalizers';
+import { useToast } from '../context/ToastContext';
+import { ORDER_STATUSES } from '../data/constants';
+import { formatINR } from '../utils/format';
 import { categoryEmoji } from '../utils/images';
+
+const POLL_INTERVAL = 5000;
 
 export default function OrderTrackingPage() {
   const { id } = useParams();
   const location = useLocation();
-  const { getOrder } = useOrders();
   const justPlaced = location.state?.justPlaced;
+  const toast = useToast();
 
-  const [now, setNow] = useState(Date.now());
+  // GET /api/orders/:id — status comes from the backend; poll for updates.
+  const { data, loading, error, refetch } = useFetch(
+    async () => {
+      const { order } = await orderApi.getById(id);
+      return mapOrder(order);
+    },
+    [id]
+  );
 
-  // Ticker so the status timeline advances live (demo: one stage per 15s).
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    if (error) return;
+    const t = setInterval(() => refetch(), POLL_INTERVAL);
     return () => clearInterval(t);
-  }, []);
+  }, [error, refetch]);
 
-  const order = getOrder(id);
-  const status = statusForOrder(order);
+  const order = data;
 
-  const progress = useMemo(() => {
-    if (!order) return 0;
-    const elapsed = Math.max(0, now - order.placedAt);
-    return Math.min(100, (elapsed / (STAGE_DURATION_MS * (ORDER_STATUSES.length - 1))) * 100);
-  }, [order, now]);
+  // Review state (only shown once the order is delivered).
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewed, setReviewed] = useState(false);
 
-  if (!order) {
+  const submitReview = async () => {
+    if (!order) return;
+    setSubmittingReview(true);
+    try {
+      await reviewApi.create({
+        restaurantId: order.restaurantId,
+        rating: reviewRating,
+        comment: reviewComment.trim(),
+      });
+      setReviewed(true);
+      toast('Thanks for your review! ⭐');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  if (loading) {
     return (
       <div className="container-app py-20">
-        <EmptyState
-          icon="🧾"
-          title="Order not found"
-          description="We couldn't find this order. It may have been placed from a different account."
-          actionLabel="Go to my orders"
-          actionTo="/orders"
-        />
+        <div className="mx-auto max-w-2xl space-y-4">
+          <div className="skeleton h-8 w-48 rounded-xl" />
+          <div className="skeleton h-64 rounded-3xl" />
+          <div className="skeleton h-40 rounded-3xl" />
+        </div>
       </div>
     );
   }
 
-  const delivered = status === 'delivered';
-  const ETA = new Date(order.placedAt + STAGE_DURATION_MS * (ORDER_STATUSES.length - 1));
+  if (error || !order) {
+    return (
+      <div className="container-app py-20">
+        {error ? (
+          <EmptyState icon="📡" title="Couldn't load this order" description={error.message} actionLabel="Try again" onAction={refetch} />
+        ) : (
+          <EmptyState
+            icon="🧾"
+            title="Order not found"
+            description="We couldn't find this order. It may have been placed from a different account."
+            actionLabel="Go to my orders"
+            actionTo="/orders"
+          />
+        )}
+      </div>
+    );
+  }
+
+  const delivered = order.orderStatus === 'delivered';
+  const cancelled = order.orderStatus === 'cancelled';
+  const statusIndex = ORDER_STATUSES.findIndex((s) => s.id === order.orderStatus);
+  const progress = statusIndex === -1 ? 0 : (statusIndex / (ORDER_STATUSES.length - 1)) * 100;
+  const partner = order.deliveryPartner;
 
   return (
     <div className="container-app py-8">
@@ -74,69 +123,101 @@ export default function OrderTrackingPage() {
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
           {/* Status timeline */}
-          <OrderStatus status={status} />
+          {cancelled ? (
+            <div className="card border-red-200 p-6 text-center dark:border-red-500/30">
+              <p className="text-3xl">😔</p>
+              <p className="mt-2 font-display text-lg font-bold text-zinc-900 dark:text-zinc-50">This order was cancelled</p>
+              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">No charges were made for this order.</p>
+            </div>
+          ) : (
+            <OrderStatus status={order.orderStatus} />
+          )}
 
           {/* Live progress strip */}
-          <div className="card p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 font-display text-base font-bold text-zinc-900 dark:text-zinc-50">
-                <Bike size={18} className="text-brand-600" /> Rider progress
-              </h3>
-              <span className="text-xs font-bold text-brand-600">{Math.round(progress)}%</span>
+          {!cancelled && (
+            <div className="card p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 font-display text-base font-bold text-zinc-900 dark:text-zinc-50">
+                  <Bike size={18} className="text-brand-600" /> Rider progress
+                </h3>
+                <span className="text-xs font-bold text-brand-600">{Math.round(progress)}%</span>
+              </div>
+              <div className="relative h-2 rounded-full bg-zinc-100 dark:bg-zinc-800">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-brand-500 to-ember-500 transition-all duration-1000"
+                  style={{ width: `${progress}%` }}
+                />
+                <span
+                  className="absolute -top-2.5 text-xl transition-all duration-1000"
+                  style={{ left: `calc(${progress}% - 12px)` }}
+                  aria-hidden="true"
+                >
+                  🛵
+                </span>
+              </div>
+              <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
+                {delivered ? (
+                  <span className="font-semibold text-emerald-600">Delivered — enjoy your meal! 🎊</span>
+                ) : (
+                  <>
+                    <span className="font-semibold text-zinc-700 dark:text-zinc-200">
+                      {ORDER_STATUSES.find((s) => s.id === order.orderStatus)?.label}.
+                    </span>{' '}
+                    Estimated delivery in <strong>{order.estimatedDelivery || '30–40 min'}</strong>.
+                  </>
+                )}
+              </p>
+              <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+                Status updates come live from the kitchen — this page refreshes automatically.
+              </p>
             </div>
-            <div className="relative h-2 rounded-full bg-zinc-100 dark:bg-zinc-800">
-              <div
-                className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-brand-500 to-ember-500 transition-all duration-1000"
-                style={{ width: `${progress}%` }}
-              />
-              <span
-                className="absolute -top-2.5 text-xl transition-all duration-1000"
-                style={{ left: `calc(${progress}% - 12px)` }}
-                aria-hidden="true"
-              >
-                🛵
-              </span>
-            </div>
-            <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
-              {delivered ? (
-                <span className="font-semibold text-emerald-600">Delivered — enjoy your meal! 🎊</span>
-              ) : (
-                <>
-                  <span className="font-semibold text-zinc-700 dark:text-zinc-200">{ORDER_STATUSES.find((s) => s.id === status)?.label}.</span>{' '}
-                  Estimated arrival by <strong>{formatTime(ETA.getTime())}</strong> ({order.estimatedDelivery}).
-                </>
-              )}
-            </p>
-            <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-              Demo note: this timeline advances one stage every 15 seconds so you can watch it live.
-            </p>
-          </div>
+          )}
 
           {/* Delivery partner */}
-          <div className="card p-5">
-            <h3 className="mb-4 font-display text-base font-bold text-zinc-900 dark:text-zinc-50">
-              {delivered ? 'Delivered by' : 'Your delivery partner'}
-            </h3>
-            <div className="flex items-center gap-4">
-              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-ember-500 font-display text-lg font-bold text-white">
-                {order.deliveryPartner.name.split(' ').map((w) => w[0]).join('')}
-              </span>
-              <div className="flex-1">
-                <p className="font-bold text-zinc-900 dark:text-zinc-50">{order.deliveryPartner.name}</p>
-                <div className="mt-0.5 flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
-                  <span className="inline-flex items-center gap-1"><Star size={12} className="fill-amber-400 text-amber-400" />{order.deliveryPartner.rating}</span>
-                  <span className="inline-flex items-center gap-1"><Bike size={12} />{order.deliveryPartner.vehicle}</span>
+          {!cancelled && (
+            <div className="card p-5">
+              <h3 className="mb-4 font-display text-base font-bold text-zinc-900 dark:text-zinc-50">
+                {delivered ? 'Delivered by' : 'Your delivery partner'}
+              </h3>
+              {partner ? (
+                <div className="flex items-center gap-4">
+                  <span className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-ember-500 font-display text-lg font-bold text-white">
+                    {partner.name.split(' ').map((w) => w[0]).join('')}
+                  </span>
+                  <div className="flex-1">
+                    <p className="font-bold text-zinc-900 dark:text-zinc-50">{partner.name}</p>
+                    <div className="mt-0.5 flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+                      {partner.rating != null && (
+                        <span className="inline-flex items-center gap-1"><Star size={12} className="fill-amber-400 text-amber-400" />{partner.rating}</span>
+                      )}
+                      {partner.vehicle && (
+                        <span className="inline-flex items-center gap-1"><Bike size={12} />{partner.vehicle}</span>
+                      )}
+                    </div>
+                  </div>
+                  {partner.phone && (
+                    <a
+                      href={`tel:${partner.phone.replace(/\s/g, '')}`}
+                      className="btn-secondary h-11 w-11 rounded-full p-0"
+                      aria-label={`Call ${partner.name}`}
+                    >
+                      <Phone size={17} />
+                    </a>
+                  )}
                 </div>
-              </div>
-              <a
-                href={`tel:${order.deliveryPartner.phone.replace(/\s/g, '')}`}
-                className="btn-secondary h-11 w-11 rounded-full p-0"
-                aria-label={`Call ${order.deliveryPartner.name}`}
-              >
-                <Phone size={17} />
-              </a>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 text-2xl dark:bg-zinc-800">
+                    <Bike size={22} className="text-zinc-400" />
+                  </span>
+                  <div>
+                    <p className="font-bold text-zinc-900 dark:text-zinc-50">Finding a delivery partner…</p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">A rider will be assigned once your order is ready.</p>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           {/* Delivery address */}
           <div className="card p-5">
@@ -149,6 +230,50 @@ export default function OrderTrackingPage() {
             </p>
             <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">Phone: {order.address.phone}</p>
           </div>
+
+          {/* Review card */}
+          {delivered && !reviewed && (
+            <div className="card p-5">
+              <h3 className="flex items-center gap-2 font-display text-base font-bold text-zinc-900 dark:text-zinc-50">
+                <Star size={18} className="fill-amber-400 text-amber-400" /> Rate this restaurant
+              </h3>
+              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">How was your order from {order.restaurantName}?</p>
+              <div className="mt-3 flex items-center gap-1">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    onClick={() => setReviewRating(star)}
+                    aria-label={`${star} star${star > 1 ? 's' : ''}`}
+                    className="p-1 transition-transform hover:scale-110 active:scale-90"
+                  >
+                    <Star
+                      size={26}
+                      className={`${star <= reviewRating ? 'fill-amber-400 text-amber-400' : 'text-zinc-300 dark:text-zinc-600'}`}
+                    />
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className="input mt-3 min-h-20 resize-none"
+                placeholder="Share your experience (optional)"
+                value={reviewComment}
+                onChange={(e) => setReviewComment(e.target.value)}
+              />
+              <button
+                onClick={submitReview}
+                disabled={submittingReview}
+                className="btn-primary mt-3 w-full py-3 disabled:opacity-70"
+              >
+                {submittingReview ? 'Submitting…' : 'Submit review'}
+              </button>
+            </div>
+          )}
+          {delivered && reviewed && (
+            <div className="card flex items-center gap-3 border-emerald-200 p-5 dark:border-emerald-500/30">
+              <CheckCircle2 size={22} className="text-emerald-600" />
+              <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Thanks! Your review has been posted. ⭐</p>
+            </div>
+          )}
         </div>
 
         {/* Order summary */}
@@ -190,7 +315,7 @@ export default function OrderTrackingPage() {
                 <span className="text-brand-600">{formatINR(order.breakdown.grandTotal)}</span>
               </div>
               <p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-400 dark:text-zinc-500">
-                <Clock size={12} /> Paid via {order.paymentMethod.toUpperCase()}
+                <Clock size={12} /> Paid via {String(order.paymentMethod || '').toUpperCase()}
               </p>
             </div>
           </div>

@@ -1,96 +1,123 @@
-import { createContext, useCallback, useContext, useMemo } from 'react';
-import { useLocalStorage } from '../hooks/useLocalStorage';
-import { STORAGE_KEYS, STAGE_DURATION_MS, ORDER_STATUSES } from '../data/constants';
-import { getRestaurant } from '../data/restaurants';
-import { uid } from '../utils/format';
-import { useToast } from './ToastContext';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { orderApi } from '../api/orderApi';
+import { foodApi } from '../api/foodApi';
+import { mapOrder, mapFood } from '../api/normalizers';
+import { useAuth } from './AuthContext';
 import { useCart } from './CartContext';
+import { useToast } from './ToastContext';
 
 const OrdersContext = createContext(null);
 
 export const useOrders = () => useContext(OrdersContext);
 
-// Demo delivery partners cycled across orders.
-const PARTNERS = [
-  { name: 'Rahul Kumar', phone: '+91 98450 12345', rating: 4.8, vehicle: 'KA 01 AB 2345' },
-  { name: 'Imran Shaikh', phone: '+91 99860 54321', rating: 4.7, vehicle: 'KA 03 CD 8765' },
-  { name: 'Suresh Patil', phone: '+91 90080 98765', rating: 4.9, vehicle: 'KA 05 EF 1122' },
-];
-
-/** Live status derived from elapsed time so tracking animates in real time. */
-export const statusForOrder = (order) => {
-  if (!order) return ORDER_STATUSES[0].id;
-  const elapsed = Date.now() - order.placedAt;
-  const index = Math.min(ORDER_STATUSES.length - 1, Math.floor(elapsed / STAGE_DURATION_MS));
-  return ORDER_STATUSES[index].id;
-};
-
+/**
+ * Orders live in MongoDB — this context caches the current user's orders and
+ * keeps them in sync with the backend after placing/reordering.
+ */
 export function OrdersProvider({ children }) {
-  const [orders, setOrders] = useLocalStorage(STORAGE_KEYS.orders, []);
-  const toast = useToast();
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const { isAuthenticated, user } = useAuth();
   const { replaceCart } = useCart();
+  const toast = useToast();
 
-  const placeOrder = useCallback(
-    ({ restaurant, items, address, paymentMethod, coupon, breakdown }) => {
-      const order = {
-        id: uid('FR'),
-        restaurantId: restaurant.id,
-        restaurantName: restaurant.name,
-        restaurantImage: restaurant.image,
-        items: items.map((it) => ({
-          key: it.key,
-          id: it.id,
-          name: it.name,
-          image: it.image,
-          veg: it.veg,
-          unitPrice: it.unitPrice,
-          addons: it.addons,
-          addonTotal: it.addonTotal,
-          customTotal: it.customTotal,
-          customizations: it.customizations,
-          quantity: it.quantity,
-        })),
-        address: { ...address },
-        paymentMethod,
-        couponCode: coupon ? coupon.code : null,
-        breakdown: {
-          total: breakdown.total,
-          deliveryFee: breakdown.deliveryFee,
-          tax: breakdown.tax,
-          discount: breakdown.discount,
-          grandTotal: breakdown.grandTotal,
-        },
-        deliveryPartner: PARTNERS[orders.length % PARTNERS.length],
-        placedAt: Date.now(),
-        estimatedDelivery: restaurant.deliveryTime,
-      };
-      setOrders((prev) => [order, ...prev]);
-      return order;
-    },
-    [orders.length, setOrders]
-  );
+  const refresh = useCallback(async () => {
+    if (!isAuthenticated) {
+      setOrders([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { orders: list } = await orderApi.getMyOrders();
+      setOrders(list.map(mapOrder));
+    } catch {
+      // Silent — pages render their own states.
+    } finally {
+      setLoading(false);
+    }
+  }, [isAuthenticated]);
 
-  const getOrder = useCallback((id) => orders.find((o) => o.id === id), [orders]);
+  useEffect(() => {
+    refresh();
+  }, [refresh, user?.id]);
 
+  /** POST /api/orders — the backend computes the authoritative total. */
+  const placeOrder = useCallback(async (payload) => {
+    const { order } = await orderApi.placeOrder(payload);
+    const mapped = mapOrder(order);
+    setOrders((prev) => [mapped, ...prev]);
+    return mapped;
+  }, []);
+
+  const getOrder = useCallback((id) => orders.find((o) => o._id === id) || null, [orders]);
+
+  /**
+   * POST /api/orders/:id/reorder — the backend returns the food ids; we refetch
+   * each dish so the cart gets fresh, authoritative prices.
+   */
   const reorder = useCallback(
-    (orderId) => {
-      const order = orders.find((o) => o.id === orderId);
-      if (!order) return;
-      const restaurant = getRestaurant(order.restaurantId);
-      if (!restaurant) return;
-      replaceCart(
-        order.restaurantId,
-        order.restaurantName,
-        order.items.map((it) => ({ ...it, quantity: it.quantity }))
-      );
-      toast('Items added back to your cart 🛒');
+    async (orderId) => {
+      try {
+        const { restaurantId, items: srcItems } = await orderApi.reorder(orderId);
+
+        const cartItems = [];
+        for (const src of srcItems) {
+          const { food } = await foodApi.getById(src.foodId);
+          const mapped = mapFood(food, food.restaurant);
+
+          // Rebuild add-ons / customizations from the food's current menu.
+          const addons = (food.addons || []).filter((a) =>
+            (src.addons || []).some((x) => String(x.id) === String(a.id))
+          );
+          const customizations = (src.customizations || [])
+            .map((c) => {
+              const group = (food.customizations || []).find((g) => String(g.id) === String(c.id));
+              const opt = group?.options.find((o) => String(o.id) === String(c.optionId));
+              return opt
+                ? { id: group.id, name: group.name, optionId: opt.id, optionName: opt.name, price: opt.price }
+                : null;
+            })
+            .filter(Boolean);
+
+          cartItems.push({
+            key: [mapped.id, addons.map((a) => a.id).join('|'), customizations.map((c) => `${c.id}:${c.optionId}`).join('|')].join('__'),
+            id: mapped.id,
+            name: mapped.name,
+            image: mapped.image,
+            veg: mapped.veg,
+            category: mapped.category,
+            unitPrice: mapped.price,
+            addons,
+            addonTotal: addons.reduce((s, a) => s + (a.price || 0), 0),
+            customizations,
+            customTotal: customizations.reduce((s, c) => s + (c.price || 0), 0),
+            quantity: src.quantity || 1,
+            restaurantId: mapped.restaurantMongoId,
+            restaurantSlug: mapped.restaurantId,
+            restaurantName: mapped.restaurantName,
+            restaurantImage: mapped.restaurantImage,
+          });
+        }
+
+        replaceCart(
+          restaurantId,
+          cartItems[0]?.restaurantName || 'Restaurant',
+          cartItems,
+          cartItems[0]?.restaurantSlug
+        );
+        toast('Items added back to your cart 🛒');
+        return { ok: true };
+      } catch (e) {
+        toast(e.message, 'error');
+        return { error: e.message };
+      }
     },
-    [orders, replaceCart, toast]
+    [replaceCart, toast]
   );
 
   const value = useMemo(
-    () => ({ orders, placeOrder, getOrder, reorder }),
-    [orders, placeOrder, getOrder, reorder]
+    () => ({ orders, loading, placeOrder, getOrder, reorder, refresh }),
+    [orders, loading, placeOrder, getOrder, reorder, refresh]
   );
 
   return <OrdersContext.Provider value={value}>{children}</OrdersContext.Provider>;

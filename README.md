@@ -15,10 +15,12 @@ Order biryani, pizza, dosas and more from your favourite restaurants with live o
 | | |
 |---|---|
 | **Customer app** | 11 pages: home, search & filters, restaurant menu, food customisation, cart, checkout, live order tracking, profile, orders, login |
+| **Fully API-connected** | Restaurants, menus, auth, addresses, coupons, orders, tracking & reviews all read/write MongoDB through the Express API — no mock data in the UI |
 | **Dark mode** | Class-based Tailwind theme with a pre-paint script (no flash), follows your system preference |
-| **Coupons** | `WELCOME50` (50% off up to ₹100), `FOOD20` (20% off up to ₹150), `FREEDEL` (free delivery) — validated against order totals |
-| **Full-stack ready** | Express REST API + Mongoose models for Users, Restaurants, Foods, Orders, Addresses, Coupons, Categories & Reviews |
-| **JWT auth** | Register / login / logout with bcrypt password hashing and protected routes |
+| **Coupons** | `WELCOME50` (50% off up to ₹100), `FOOD20` (20% off up to ₹150), `FREEDEL` (free delivery) — validated by the backend |
+| **JWT auth** | Register / login / logout with bcrypt password hashing, session restore on refresh, role-based access |
+| **Server-authoritative pricing** | The backend recomputes every order total (items + add-ons + customisations + GST + coupon); the client never supplies a price |
+| **Reviews** | Rate restaurants after delivery — ratings aggregate server-side into the restaurant's score |
 | **Mobile-first** | Sticky navbar, bottom navigation, no horizontal overflow at 390px, tested in headless Chrome |
 | **Polished UX** | Loading skeletons, empty & error states, toasts, micro-animations, veg/non-veg indicators |
 
@@ -51,10 +53,11 @@ Order biryani, pizza, dosas and more from your favourite restaurants with live o
 ```
 .
 ├── src/                  # React frontend
+│   ├── api/              #   API client + typed endpoint modules (auth, restaurants, orders…)
 │   ├── components/       #   reusable UI (navbar, cards, modals, skeletons…)
 │   ├── context/          #   cart, auth, favourites, orders, addresses, settings, toasts
-│   ├── data/             #   mock data (also seeds the database)
-│   ├── hooks/            #   localStorage, fake-loading
+│   ├── data/             #   UI metadata (categories, coupons) + seed source for the DB
+│   ├── hooks/            #   useFetch, localStorage
 │   ├── pages/            #   11 pages
 │   └── utils/            #   pricing, formatting, image helpers
 ├── backend/              # Express REST API
@@ -67,33 +70,38 @@ Order biryani, pizza, dosas and more from your favourite restaurants with live o
 │   │   ├── utils/        #   helpers
 │   │   └── scripts/      #   database seeding
 │   └── server.js         #   Express entry point
-├── scripts/              # API test suite
+├── scripts/              # E2E + API test suites
 ├── screenshots/          # README images
 └── index.html
 ```
 
 ## 🚀 Getting Started
 
-### Frontend (works standalone with mock data)
-
-```bash
-npm install
-npm run dev        # http://localhost:5173
-```
-
-### Backend (Express + MongoDB)
+### 1. Start the backend (Express + MongoDB)
 
 ```bash
 cd backend
 npm install
-npm run seed       # loads restaurants/foods/categories/coupons + demo users into MongoDB
-npm run dev        # http://localhost:5000
+npm run dev        # http://localhost:5000 (auto-seeds an empty database)
 ```
 
 > **No MongoDB installed?** The backend auto-starts an in-memory MongoDB
 > (`mongodb-memory-server`) when `MONGO_URI` is not set, so it runs immediately.
 > For a real database, create a free [MongoDB Atlas](https://www.mongodb.com/atlas)
 > cluster and set `MONGO_URI` in `backend/.env` (see `.env.example`).
+> `npm run seed` re-seeds restaurants, foods, coupons and demo users.
+
+### 2. Start the frontend (React)
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+```
+
+The frontend calls the API through a Vite dev proxy (`/api` → `http://localhost:5000`),
+so no configuration is needed. If the backend runs elsewhere, set `VITE_API_URL`
+in a frontend `.env` file (see `.env.example`). The app shows friendly error
+states with retry when the API is unreachable.
 
 ### Demo accounts (created by the seed script)
 
@@ -111,6 +119,7 @@ npm run dev        # http://localhost:5000
 | POST | `/api/auth/register` | Create account | — |
 | POST | `/api/auth/login` | Login → JWT | — |
 | GET | `/api/auth/me` | Current user | ✅ |
+| PATCH | `/api/auth/me` | Update name / phone | ✅ |
 | POST | `/api/auth/forgot-password` | Request reset link | — |
 | POST | `/api/auth/reset-password/:token` | Set new password | — |
 | GET | `/api/categories` | All categories | — |
@@ -141,7 +150,7 @@ npm run dev        # http://localhost:5000
 - [x] **Phase 5 (API)** — Orders, addresses, reorder, favourites & role-gated status pipeline
 - [x] **Phase 12 (API)** — Reviews with rating aggregation & delivered-order gate
 - [x] **Phase 13 (API)** — Automated endpoint test suite (`npm run test:api`, 65 checks)
-- [ ] **Phase 4–5 (UI)** — Wire the React app to the API (real auth, orders, addresses)
+- [x] **Phase 4–5 (UI)** — Full API connection: real auth (JWT + refresh restore), restaurants, menus, addresses, coupons, orders, tracking & reviews
 - [ ] **Phase 6** — Admin dashboard (restaurant & food management, order pipeline)
 - [ ] **Phase 7** — Restaurant owner dashboard
 - [ ] **Phase 8** — Payment gateway (UPI / cards / net-banking, keep COD)
@@ -159,14 +168,30 @@ validation, order placement with server-side price recomputation (unit price +
 add-ons + customisations + GST + coupon), the full restaurant → delivery status
 pipeline, admin CRUD, and reviews.
 
-**Customer journey** — verified end-to-end in headless Chrome: signup → search →
-restaurant → customised dish → cart → coupon → checkout → order placement → live
-tracking → reorder, plus favourites persistence, veg mode, dark mode and mobile
-layout (390px, no horizontal overflow, no console errors).
+**Customer journey** — verified end-to-end in headless Chrome against the real
+API: signup → search → restaurant → customised dish → cart → backend-validated
+coupon → checkout with a MongoDB-persisted address → real order placement → live
+tracking → reorder → profile → logout → login again → refresh persistence, plus
+dark mode, reviews after delivery, and mobile layout (390px, no horizontal
+overflow, no console errors). 23/23 checks pass.
+
+> Note: `npm run test:api` asserts on exact database state (e.g. "reviews empty",
+> "1 seeded address"), so restart the backend (fresh in-memory DB) before running
+> it if the app has been used.
 
 ## 📝 Notes
 
-- Frontend runs standalone on mock data + `localStorage`; the Express API mirrors
-  the same data model so the UI can be wired to it without redesign.
-- Payments, SMS/email delivery and real-time updates are simulated in the frontend
-  demo and are on the roadmap for the backend.
+- The UI never trusts client-side prices: order totals (unit price + add-ons +
+  customisations + 5% GST + coupon discount) are recomputed by the backend, and
+  the cart is only cleared after the order exists in MongoDB.
+- The cart, favourites and UI settings stay in `localStorage`; auth, addresses,
+  orders and reviews are the source of truth in MongoDB. Passwords are never
+  stored client-side.
+- The tracking page polls `GET /api/orders/:id` every 5s — status changes made
+  by the kitchen/rider appear without a manual refresh (WebSockets are a later
+  phase).
+- "Continue with Google" is a demo social login: it provisions a demo account
+  via the API on first use (no real OAuth provider is wired up yet).
+- Payments are simulated (UPI / card / COD) — no real money moves, and card
+  details are never stored.
+

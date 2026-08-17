@@ -1,5 +1,5 @@
 import { Leaf, SlidersHorizontal } from 'lucide-react';
-import { allCuisines } from '../data/restaurants';
+import { CUISINES } from '../data/constants';
 
 const RATING_OPTIONS = [
   { value: 4.5, label: '4.5+ stars' },
@@ -116,7 +116,7 @@ export default function FilterPanel({ filters, onChange, onClear, showTitle = tr
       {/* Cuisines */}
       <FilterGroup title="Cuisine">
         <div className="flex flex-wrap gap-2">
-          {allCuisines.map((c) => (
+          {CUISINES.map((c) => (
             <Pill key={c} active={filters.cuisines.includes(c)} onClick={() => toggleCuisine(c)}>
               {c}
             </Pill>

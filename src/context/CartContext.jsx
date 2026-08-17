@@ -1,9 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { STORAGE_KEYS } from '../data/constants';
-import { getRestaurant } from '../data/restaurants';
 import { itemTotal } from '../utils/pricing';
-import { formatINR } from '../utils/format';
 import { useToast } from './ToastContext';
 import Modal from '../components/Modal';
 
@@ -11,7 +9,13 @@ const CartContext = createContext(null);
 
 export const useCart = () => useContext(CartContext);
 
-const EMPTY_CART = { restaurantId: null, restaurantName: null, items: [] };
+const EMPTY_CART = {
+  restaurantId: null, // Mongo _id — used when placing the order
+  restaurantSlug: null, // slug — used for /restaurant/:slug links
+  restaurantName: null,
+  restaurantImage: null,
+  items: [],
+};
 
 /**
  * Builds a stable line key so two identical configurations of the same dish
@@ -24,6 +28,32 @@ const lineKey = (item) =>
     item.addons?.map((a) => a.id).join('|') || '',
   ].join('__');
 
+/** Turn an API food (already normalized) into a cart line entry. */
+const toEntry = (item, quantity, addons, customizations) => {
+  const addonTotal = addons.reduce((s, a) => s + (a.price || 0), 0);
+  const customTotal = customizations.reduce((s, c) => s + (c.price || 0), 0);
+  return {
+    key: lineKey({ id: item.id, addons, customizations }),
+    id: item.id, // food Mongo _id (order payload foodId)
+    name: item.name,
+    image: item.image,
+    veg: item.veg,
+    category: item.category,
+    unitPrice: item.price,
+    addons,
+    addonTotal,
+    customTotal,
+    customizations: customizations.map((c) => ({
+      id: c.id,
+      name: c.name,
+      optionId: c.optionId,
+      optionName: c.optionName,
+      price: c.price || 0,
+    })),
+    quantity,
+  };
+};
+
 export function CartProvider({ children }) {
   const [cart, setCart] = useLocalStorage(STORAGE_KEYS.cart, EMPTY_CART);
   const [conflict, setConflict] = useState(null); // { pending, currentRestaurant }
@@ -31,37 +61,16 @@ export function CartProvider({ children }) {
 
   const addItem = useCallback(
     (item, { quantity = 1, addons = [], customizations = [] } = {}) => {
-      const restaurant = getRestaurant(item.restaurantId);
       const hasExisting = (cart.items || []).length > 0;
 
       // Single-restaurant cart: if items are already from another restaurant,
       // ask the user whether to switch.
-      if (hasExisting && cart.restaurantId !== item.restaurantId) {
+      if (hasExisting && cart.restaurantId !== item.restaurantMongoId) {
         setConflict({ pending: { item, quantity, addons, customizations }, currentRestaurant: cart.restaurantName });
         return;
       }
 
-      const addonTotal = addons.reduce((s, a) => s + (a.price || 0), 0);
-      const customTotal = customizations.reduce((s, c) => s + (c.price || 0), 0);
-      const entry = {
-        key: lineKey({ id: item.id, addons, customizations }),
-        id: item.id,
-        name: item.name,
-        image: item.image,
-        veg: item.veg,
-        unitPrice: item.price,
-        addons,
-        addonTotal,
-        customTotal,
-        customizations: customizations.map((c) => ({
-          id: c.id,
-          name: c.name,
-          optionId: c.optionId,
-          optionName: c.optionName,
-          price: c.price || 0,
-        })),
-        quantity,
-      };
+      const entry = toEntry(item, quantity, addons, customizations);
 
       setCart((prev) => {
         const base = prev.items?.length ? prev : EMPTY_CART;
@@ -69,7 +78,13 @@ export function CartProvider({ children }) {
         const items = existing
           ? base.items.map((it) => (it.key === entry.key ? { ...it, quantity: it.quantity + quantity } : it))
           : [...base.items, entry];
-        return { restaurantId: item.restaurantId, restaurantName: item.restaurantName, items };
+        return {
+          restaurantId: item.restaurantMongoId,
+          restaurantSlug: item.restaurantId,
+          restaurantName: item.restaurantName,
+          restaurantImage: item.restaurantImage,
+          items,
+        };
       });
       toast(`${item.name} added to cart 🛒`);
     },
@@ -79,30 +94,12 @@ export function CartProvider({ children }) {
   const replaceAndAdd = useCallback(() => {
     if (!conflict) return;
     const { pending } = conflict;
-    const addonTotal = pending.addons.reduce((s, a) => s + (a.price || 0), 0);
-    const customTotal = pending.customizations.reduce((s, c) => s + (c.price || 0), 0);
-    const entry = {
-      key: lineKey({ id: pending.item.id, addons: pending.addons, customizations: pending.customizations }),
-      id: pending.item.id,
-      name: pending.item.name,
-      image: pending.item.image,
-      veg: pending.item.veg,
-      unitPrice: pending.item.price,
-      addons: pending.addons,
-      addonTotal,
-      customTotal,
-      customizations: pending.customizations.map((c) => ({
-        id: c.id,
-        name: c.name,
-        optionId: c.optionId,
-        optionName: c.optionName,
-        price: c.price || 0,
-      })),
-      quantity: pending.quantity,
-    };
+    const entry = toEntry(pending.item, pending.quantity, pending.addons, pending.customizations);
     setCart({
-      restaurantId: pending.item.restaurantId,
+      restaurantId: pending.item.restaurantMongoId,
+      restaurantSlug: pending.item.restaurantId,
       restaurantName: pending.item.restaurantName,
+      restaurantImage: pending.item.restaurantImage,
       items: [entry],
     });
     setConflict(null);
@@ -140,12 +137,15 @@ export function CartProvider({ children }) {
     setCart(EMPTY_CART);
   }, [setCart]);
 
-  const replaceCart = useCallback(
-    (restaurantId, restaurantName, items) => {
-      setCart({ restaurantId, restaurantName, items });
-    },
-    [setCart]
-  );
+  const replaceCart = useCallback((restaurantId, restaurantName, items, restaurantSlug) => {
+    setCart({
+      restaurantId,
+      restaurantSlug: restaurantSlug || items[0]?.restaurantSlug || null,
+      restaurantName,
+      restaurantImage: items[0]?.restaurantImage || null,
+      items,
+    });
+  }, [setCart]);
 
   const count = useMemo(
     () => (cart.items || []).reduce((s, it) => s + it.quantity, 0),
@@ -181,7 +181,7 @@ export function CartProvider({ children }) {
       >
         {conflict && (
           <div className="space-y-5">
-            <p className="text-sm leading-relaxed text-zinc-600">
+            <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
               Your cart already has items from <strong>{conflict.currentRestaurant}</strong>. FoodRush
               delivers from one restaurant per order. Replace them with the new item?
             </p>

@@ -4,6 +4,7 @@ import { Eye, EyeOff, Lock, Mail, Phone, UserRound } from 'lucide-react';
 import Logo from '../components/Logo';
 import Modal from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
+import { authApi } from '../api/authApi';
 
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
@@ -24,6 +25,7 @@ export default function LoginPage() {
   const [form, setForm] = useState({ name: '', identifier: '', phone: '', password: '', confirm: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
@@ -32,38 +34,77 @@ export default function LoginPage() {
 
   const finish = () => navigate(redirect, { replace: true });
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSubmitting(true);
 
     if (mode === 'login') {
       if (!form.identifier.trim() || !form.password) {
         setError('Please enter your email/phone and password.');
+        setSubmitting(false);
         return;
       }
-      const res = login(form.identifier.trim(), form.password);
+      const res = await login(form.identifier.trim(), form.password);
+      setSubmitting(false);
       if (res.error) return setError(res.error);
       finish();
     } else {
-      if (!form.name.trim()) return setError('Please enter your name.');
-      if (!/^\d{10}$/.test(form.phone.trim())) return setError('Please enter a valid 10-digit phone number.');
-      if (form.password.length < 6) return setError('Password must be at least 6 characters.');
-      if (form.password !== form.confirm) return setError('Passwords do not match.');
-      const res = signup({ name: form.name.trim(), email: form.identifier.trim() || `${form.phone}@foodrush.demo`, phone: form.phone.trim(), password: form.password });
+      if (!form.name.trim()) {
+        setError('Please enter your name.');
+        setSubmitting(false);
+        return;
+      }
+      if (!/^\d{10}$/.test(form.phone.trim())) {
+        setError('Please enter a valid 10-digit phone number.');
+        setSubmitting(false);
+        return;
+      }
+      if (!form.identifier.trim()) {
+        setError('Please enter your email address.');
+        setSubmitting(false);
+        return;
+      }
+      if (form.password.length < 6) {
+        setError('Password must be at least 6 characters.');
+        setSubmitting(false);
+        return;
+      }
+      if (form.password !== form.confirm) {
+        setError('Passwords do not match.');
+        setSubmitting(false);
+        return;
+      }
+      const res = await signup({
+        name: form.name.trim(),
+        email: form.identifier.trim(),
+        phone: form.phone.trim(),
+        password: form.password,
+      });
+      setSubmitting(false);
       if (res.error) return setError(res.error);
       finish();
     }
   };
 
-  const handleGoogle = () => {
-    googleLogin();
+  const handleGoogle = async () => {
+    setError('');
+    setSubmitting(true);
+    const res = await googleLogin();
+    setSubmitting(false);
+    if (res.error) return setError(res.error);
     finish();
   };
 
-  const handleForgot = (e) => {
+  const handleForgot = async (e) => {
     e.preventDefault();
     if (!forgotEmail.trim()) return;
-    setForgotSent(true);
+    try {
+      await authApi.forgotPassword(forgotEmail.trim());
+      setForgotSent(true);
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
@@ -101,10 +142,11 @@ export default function LoginPage() {
             {mode === 'login' ? 'Login to continue ordering delicious food.' : 'Sign up in seconds and start ordering.'}
           </p>
 
-          {/* Google */}
+          {/* Google (demo social login) */}
           <button
             onClick={handleGoogle}
-            className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-xl border border-zinc-200 bg-white py-3 text-sm font-bold text-zinc-700 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md active:scale-[0.98] dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:border-zinc-600"
+            disabled={submitting}
+            className="mt-6 flex w-full items-center justify-center gap-2.5 rounded-xl border border-zinc-200 bg-white py-3 text-sm font-bold text-zinc-700 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md active:scale-[0.98] disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:border-zinc-600"
           >
             <GoogleIcon /> Continue with Google
           </button>
@@ -125,13 +167,13 @@ export default function LoginPage() {
             )}
 
             <div>
-              <label className="label" htmlFor="identifier">Email or phone</label>
+              <label className="label" htmlFor="identifier">{mode === 'signup' ? 'Email' : 'Email or phone'}</label>
               <div className="relative">
                 <Mail size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
                 <input
                   id="identifier"
                   className="input pl-10"
-                  placeholder="you@example.com"
+                  placeholder={mode === 'signup' ? 'you@example.com' : 'you@example.com or 9876543210'}
                   value={form.identifier}
                   onChange={set('identifier')}
                   autoComplete="email"
@@ -205,13 +247,17 @@ export default function LoginPage() {
               </p>
             )}
 
-            <button type="submit" className="btn-primary w-full py-3">
-              {mode === 'login' ? 'Login' : 'Create account'}
+            <button type="submit" disabled={submitting} className="btn-primary w-full py-3 disabled:opacity-70">
+              {submitting
+                ? 'Please wait…'
+                : mode === 'login'
+                  ? 'Login'
+                  : 'Create account'}
             </button>
           </form>
 
           <p className="mt-5 text-center text-xs text-zinc-400 dark:text-zinc-500">
-            Demo app — accounts are stored locally in your browser only.
+            Accounts are stored securely in the FoodRush backend (bcrypt + JWT).
           </p>
         </div>
 

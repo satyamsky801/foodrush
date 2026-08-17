@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell, CreditCard, Heart, LogOut, MapPin, Pencil, Plus, ReceiptText, Settings as SettingsIcon, Smartphone, Trash2, UserRound,
@@ -17,7 +17,9 @@ import { useSettings } from '../context/SettingsContext';
 import { useToast } from '../context/ToastContext';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { STORAGE_KEYS } from '../data/constants';
-import { getRestaurant, getAllFoods } from '../data/restaurants';
+import { restaurantApi } from '../api/restaurantApi';
+import { foodApi } from '../api/foodApi';
+import { mapRestaurant, mapFood } from '../api/normalizers';
 import { formatINR, initials, uid } from '../utils/format';
 
 const TABS = [
@@ -61,14 +63,53 @@ export default function ProfilePage() {
   const [paymentModal, setPaymentModal] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ type: 'upi', upiId: '', cardNumber: '', cardName: '' });
 
-  const favRestaurants = useMemo(() => favoriteRestaurants.map(getRestaurant).filter(Boolean), [favoriteRestaurants]);
-  const favFoods = useMemo(() => {
-    const all = getAllFoods();
-    return favoriteFoods.map((id) => all.find((f) => f.id === id)).filter(Boolean);
+  // Favourite restaurants/foods resolve from the backend (they're stored as
+  // restaurant slugs + food Mongo ids).
+  const [favRestaurants, setFavRestaurants] = useState([]);
+  const [favFoods, setFavFoods] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        favoriteRestaurants.map(async (slug) => {
+          try {
+            const { restaurant } = await restaurantApi.getBySlug(slug);
+            return mapRestaurant(restaurant);
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (!cancelled) setFavRestaurants(results.filter(Boolean));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [favoriteRestaurants]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        favoriteFoods.map(async (foodId) => {
+          try {
+            const { food } = await foodApi.getById(foodId);
+            return mapFood(food, food.restaurant);
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (!cancelled) setFavFoods(results.filter(Boolean));
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [favoriteFoods]);
 
   const stats = useMemo(() => {
-    const totalSpent = orders.reduce((s, o) => s + o.breakdown.grandTotal, 0);
+    const totalSpent = orders.reduce((s, o) => s + (o.breakdown?.grandTotal || 0), 0);
     return { orders: orders.length, spent: totalSpent, favourites: favoriteRestaurants.length + favoriteFoods.length };
   }, [orders, favoriteRestaurants, favoriteFoods]);
 
@@ -86,13 +127,17 @@ export default function ProfilePage() {
     );
   }
 
-  const saveProfile = () => {
+  const memberSince = user.createdAt
+    ? new Date(user.createdAt).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+    : '—';
+
+  const saveProfile = async () => {
     if (!profileForm.name.trim()) {
       toast('Name cannot be empty.', 'error');
       return;
     }
-    updateProfile({ name: profileForm.name.trim(), phone: profileForm.phone.trim() });
-    setEditingProfile(false);
+    const res = await updateProfile({ name: profileForm.name.trim(), phone: profileForm.phone.trim() });
+    if (res.ok) setEditingProfile(false);
   };
 
   const openAddAddress = () => {
@@ -109,7 +154,7 @@ export default function ProfilePage() {
     setAddressModal(true);
   };
 
-  const saveAddress = () => {
+  const saveAddress = async () => {
     const { name, phone, street, area, city, pincode } = addressForm;
     if (!name.trim() || !phone.trim() || !street.trim() || !area.trim() || !pincode.trim()) {
       setAddrError('Please fill in all required fields.');
@@ -119,9 +164,10 @@ export default function ProfilePage() {
       setAddrError('Pincode should be 6 digits.');
       return;
     }
-    if (editingAddress) updateAddress(editingAddress.id, addressForm);
-    else addAddress(addressForm);
-    setAddressModal(false);
+    const res = editingAddress
+      ? await updateAddress(editingAddress.id, addressForm)
+      : await addAddress(addressForm);
+    if (res.ok) setAddressModal(false);
   };
 
   const savePayment = () => {
@@ -223,7 +269,7 @@ export default function ProfilePage() {
               <Row label="Name" value={user.name} />
               <Row label="Email" value={user.email} />
               <Row label="Phone" value={user.phone || '—'} />
-              <Row label="Member since" value="August 2026" />
+              <Row label="Member since" value={memberSince} />
             </dl>
             <button onClick={() => navigate('/orders')} className="btn-secondary mt-5 w-full py-2.5 text-sm">
               <ReceiptText size={15} /> View order history
@@ -237,14 +283,14 @@ export default function ProfilePage() {
               <div className="space-y-3">
                 {orders.slice(0, 3).map((o) => (
                   <button
-                    key={o.id}
-                    onClick={() => navigate(`/order/${o.id}`)}
+                    key={o._id}
+                    onClick={() => navigate(`/order/${o._id}`)}
                     className="flex w-full items-center gap-3 rounded-xl border border-zinc-100 p-3 text-left transition-colors hover:border-brand-300 dark:border-zinc-800 dark:hover:border-brand-500/50"
                   >
                     <AppImage src={o.restaurantImage} alt="" emoji="🍽️" className="h-11 w-11 shrink-0 rounded-lg" />
                     <div className="min-w-0 flex-1">
                       <p className="line-clamp-1 text-sm font-bold text-zinc-800 dark:text-zinc-100">{o.restaurantName}</p>
-                      <p className="text-xs text-zinc-400 dark:text-zinc-500">#{o.id} · {formatINR(o.breakdown.grandTotal)}</p>
+                      <p className="text-xs text-zinc-400 dark:text-zinc-500">#{o.id} · {formatINR(o.breakdown?.grandTotal || 0)}</p>
                     </div>
                   </button>
                 ))}
@@ -371,9 +417,9 @@ export default function ProfilePage() {
               <Bell size={17} className="text-brand-600" /> Notifications
             </h3>
             <div className="space-y-4">
-              <SettingRow title="Email notifications" desc="Order updates and offers via email" checked={settings.notifications.email} onChange={(v) => toggleNotification('email')} />
-              <SettingRow title="SMS alerts" desc="Order status updates on SMS" checked={settings.notifications.sms} onChange={(v) => toggleNotification('sms')} />
-              <SettingRow title="Push notifications" desc="Live tracking and reorder reminders" checked={settings.notifications.push} onChange={(v) => toggleNotification('push')} />
+              <SettingRow title="Email notifications" desc="Order updates and offers via email" checked={settings.notifications.email} onChange={() => toggleNotification('email')} />
+              <SettingRow title="SMS alerts" desc="Order status updates on SMS" checked={settings.notifications.sms} onChange={() => toggleNotification('sms')} />
+              <SettingRow title="Push notifications" desc="Live tracking and reorder reminders" checked={settings.notifications.push} onChange={() => toggleNotification('push')} />
             </div>
           </div>
 

@@ -13,14 +13,20 @@ export const STORAGE_KEYS = {
   paymentMethods: 'foodrush_payment_methods',
 };
 
+// Matches the backend Order model's status flow.
 export const ORDER_STATUSES = [
   { id: 'placed', label: 'Order placed' },
   { id: 'accepted', label: 'Restaurant accepted' },
   { id: 'preparing', label: 'Food being prepared' },
+  { id: 'ready', label: 'Ready for pickup' },
   { id: 'picked-up', label: 'Picked up' },
   { id: 'out-for-delivery', label: 'Out for delivery' },
   { id: 'delivered', label: 'Delivered' },
 ];
 
-// Demo-only: each tracking stage advances every N ms so the timeline feels live.
-export const STAGE_DURATION_MS = 15000;
+// Unique cuisine names across the seeded restaurants (filter UI options).
+export const CUISINES = [
+  'American', 'Asian', 'Bakery', 'Biryani', 'Burgers', 'Chaat', 'Chinese', 'Desserts',
+  'Filter Coffee', 'Healthy', 'Hyderabadi', 'Italian', 'Mughlai', 'North Indian', 'Pizza',
+  'Rolls', 'Salads', 'South Indian', 'Street Food',
+].sort();

@@ -1,21 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Bike, ChevronLeft, ChevronRight, ShieldCheck, Timer, Zap } from 'lucide-react';
+import { ArrowRight, Bike, ChevronLeft, ChevronRight, RefreshCw, ShieldCheck, Timer, Zap } from 'lucide-react';
 import SearchBar from '../components/SearchBar';
 import CategoryCard from '../components/CategoryCard';
 import RestaurantCard from '../components/RestaurantCard';
 import FoodCard from '../components/FoodCard';
 import SectionHeader from '../components/SectionHeader';
-import { SkeletonBanner, SkeletonFoodCard, SkeletonRestaurantCard } from '../components/LoadingSkeleton';
-import { useFakeLoading } from '../hooks/useFakeLoading';
+import { SkeletonFoodCard, SkeletonRestaurantCard } from '../components/LoadingSkeleton';
+import { useFetch } from '../hooks/useFetch';
 import { categories } from '../data/categories';
-import { popularRestaurants, recommendedFoods, topRatedRestaurants } from '../data/restaurants';
 import { offerBanners } from '../data/offers';
+import { restaurantApi } from '../api/restaurantApi';
+import { foodApi } from '../api/foodApi';
+import { mapRestaurant, mapFood } from '../api/normalizers';
 import { useSettings } from '../context/SettingsContext';
 
 const FEATURES = [
   { icon: Zap, title: 'Super-fast delivery', text: 'Hot food at your door in 30 minutes or less.' },
-  { icon: Bike, title: 'Live order tracking', text: 'Watch your rider zip across the map in real time.' },
+  { icon: Bike, title: 'Live order tracking', text: 'Watch your order move from kitchen to doorstep.' },
   { icon: ShieldCheck, title: 'Fresh & hygienic', text: 'Sealed packaging and quality-checked kitchens.' },
 ];
 
@@ -24,7 +26,25 @@ export default function HomePage() {
   const { settings } = useSettings();
   const [query, setQuery] = useState('');
   const [bannerIndex, setBannerIndex] = useState(0);
-  const loading = useFakeLoading([], 500);
+
+  // Load restaurants + recommended dishes from the backend.
+  const { data, loading, error, refetch } = useFetch(
+    async () => {
+      const [restaurantRes, foodRes] = await Promise.all([
+        restaurantApi.list(),
+        foodApi.list(),
+      ]);
+      return {
+        restaurants: (restaurantRes.restaurants || []).map(mapRestaurant),
+        recommended: (foodRes.foods || [])
+          .filter((f) => f.isRecommended)
+          .slice(0, 12)
+          .map((f) => mapFood(f, f.restaurant)),
+      };
+    },
+    [],
+    { enabled: true }
+  );
 
   // Auto-advance the offer carousel.
   useEffect(() => {
@@ -37,10 +57,14 @@ export default function HomePage() {
     navigate(trimmed ? `/restaurants?q=${encodeURIComponent(trimmed)}` : '/restaurants');
   };
 
+  const restaurants = data?.restaurants || [];
+  const popularRestaurants = restaurants.filter((r) => r.featured);
+  const topRatedRestaurants = restaurants.filter((r) => r.topRated);
+
   // Veg mode hides non-veg restaurants & dishes.
   const filteredPopular = settings.vegMode ? popularRestaurants.filter((r) => r.pureVeg) : popularRestaurants;
   const filteredTop = settings.vegMode ? topRatedRestaurants.filter((r) => r.pureVeg) : topRatedRestaurants;
-  const filteredRecommended = settings.vegMode ? recommendedFoods.filter((f) => f.veg) : recommendedFoods;
+  const recommendedFoods = (data?.recommended || []).filter((f) => (settings.vegMode ? f.veg : true));
 
   return (
     <div>
@@ -154,12 +178,14 @@ export default function HomePage() {
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {[...Array(8)].map((_, i) => <SkeletonRestaurantCard key={i} />)}
           </div>
+        ) : error ? (
+          <ApiErrorCard onRetry={refetch} />
         ) : filteredPopular.length ? (
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filteredPopular.map((r) => <RestaurantCard key={r.id} restaurant={r} />)}
           </div>
         ) : (
-          <p className="rounded-2xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500">
+          <p className="rounded-2xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
             No restaurants match your veg mode. Toggle it off in Profile → Settings.
           </p>
         )}
@@ -178,9 +204,11 @@ export default function HomePage() {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
               {[...Array(6)].map((_, i) => <SkeletonFoodCard key={i} />)}
             </div>
+          ) : error ? (
+            <ApiErrorCard onRetry={refetch} />
           ) : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-              {filteredRecommended.map((f) => <FoodCard key={f.id} food={f} showRestaurant />)}
+              {recommendedFoods.map((f) => <FoodCard key={f.id} food={f} showRestaurant />)}
             </div>
           )}
         </div>
@@ -198,6 +226,8 @@ export default function HomePage() {
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {[...Array(4)].map((_, i) => <SkeletonRestaurantCard key={i} />)}
           </div>
+        ) : error ? (
+          <ApiErrorCard onRetry={refetch} />
         ) : (
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filteredTop.map((r) => <RestaurantCard key={r.id} restaurant={r} />)}
@@ -233,6 +263,21 @@ export default function HomePage() {
           </Link>
         </div>
       </section>
+    </div>
+  );
+}
+
+function ApiErrorCard({ onRetry }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-ember-300 bg-ember-50/50 p-8 text-center dark:border-ember-500/40 dark:bg-ember-500/10">
+      <p className="text-3xl">📡</p>
+      <p className="mt-2 font-display text-base font-bold text-zinc-900 dark:text-zinc-50">Couldn't load restaurants</p>
+      <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500 dark:text-zinc-400">
+        Make sure the backend is running: <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">cd backend && npm run dev</code>
+      </p>
+      <button onClick={onRetry} className="btn-secondary mt-4 px-5 py-2.5 text-sm">
+        <RefreshCw size={15} /> Try again
+      </button>
     </div>
   );
 }

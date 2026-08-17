@@ -1,10 +1,32 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BadgePercent, Check, Tag, X } from 'lucide-react';
-import { coupons } from '../data/coupons';
+import { couponApi } from '../api/couponApi';
+import { coupons as localCoupons } from '../data/coupons';
 import { formatINR } from '../utils/format';
 
+/**
+ * Lists coupons (fetched from the backend, falling back to the bundled list)
+ * and lets the user apply one. Validation happens in the parent via the
+ * backend's /coupons/validate endpoint so the server stays authoritative.
+ */
 export default function CouponBox({ appliedCode, onApply, onRemove, error }) {
   const [code, setCode] = useState('');
+  const [coupons, setCoupons] = useState(localCoupons);
+
+  useEffect(() => {
+    let cancelled = false;
+    couponApi
+      .list()
+      .then(({ coupons: list }) => {
+        if (!cancelled && Array.isArray(list) && list.length) setCoupons(list);
+      })
+      .catch(() => {
+        // Keep the bundled list when the backend is unreachable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const submit = (e) => {
     e.preventDefault();
@@ -61,7 +83,9 @@ export default function CouponBox({ appliedCode, onApply, onRemove, error }) {
                 <p className="flex items-center gap-1.5 text-sm font-bold text-zinc-800 dark:text-zinc-100">
                   <Tag size={13} className="text-brand-600" /> {c.code}
                 </p>
-                <p className="mt-0.5 line-clamp-1 text-xs text-zinc-500 dark:text-zinc-400">{c.description}</p>
+                <p className="mt-0.5 line-clamp-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  {c.description || `${c.title} · min order ${formatINR(c.minOrder)}`}
+                </p>
               </div>
               {applied ? (
                 <span className="shrink-0 text-xs font-bold text-emerald-600">Applied ✓</span>
@@ -78,8 +102,7 @@ export default function CouponBox({ appliedCode, onApply, onRemove, error }) {
         })}
       </div>
       <p className="text-xs text-zinc-400 dark:text-zinc-500">
-        Coupons are auto-checked against your order total ({' '}
-        {coupons.map((c) => `${c.code} min ${formatINR(c.minOrder)}`).join(' · ')} ).
+        Coupons are checked against your order total by the server before checkout.
       </p>
     </div>
   );

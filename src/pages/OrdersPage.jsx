@@ -1,16 +1,17 @@
 import { useMemo } from 'react';
 import OrderCard from '../components/OrderCard';
 import EmptyState from '../components/EmptyState';
-import { useOrders, statusForOrder } from '../context/OrdersContext';
+import { SkeletonRow } from '../components/LoadingSkeleton';
+import { useOrders } from '../context/OrdersContext';
 import { useAuth } from '../context/AuthContext';
 
 export default function OrdersPage() {
-  const { orders, reorder } = useOrders();
+  const { orders, loading, reorder } = useOrders();
   const { isAuthenticated } = useAuth();
 
   const { current, previous } = useMemo(() => {
-    const current = orders.filter((o) => statusForOrder(o) !== 'delivered');
-    const previous = orders.filter((o) => statusForOrder(o) === 'delivered');
+    const current = orders.filter((o) => o.orderStatus !== 'delivered' && o.orderStatus !== 'cancelled');
+    const previous = orders.filter((o) => o.orderStatus === 'delivered');
     return { current, previous };
   }, [orders]);
 
@@ -24,6 +25,22 @@ export default function OrdersPage() {
           actionLabel="Login / Sign Up"
           actionTo="/login?redirect=/orders"
         />
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="container-app py-8">
+        <div className="mb-6 skeleton h-9 w-48 rounded-xl" />
+        <div className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="card space-y-3 p-5">
+              <SkeletonRow />
+              <SkeletonRow />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -57,7 +74,7 @@ export default function OrdersPage() {
           </h2>
           <div className="space-y-4">
             {current.map((o) => (
-              <OrderCard key={o.id} order={o} />
+              <OrderCard key={o._id} order={o} />
             ))}
           </div>
         </section>
@@ -68,7 +85,7 @@ export default function OrdersPage() {
           <h2 className="mb-4 font-display text-lg font-bold text-zinc-900 dark:text-zinc-50">Previous orders</h2>
           <div className="space-y-4">
             {previous.map((o) => (
-              <OrderCard key={o.id} order={o} onReorder={reorder} />
+              <OrderCard key={o._id} order={o} onReorder={reorder} />
             ))}
           </div>
         </section>

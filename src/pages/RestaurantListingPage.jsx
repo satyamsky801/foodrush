@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { SearchX, SlidersHorizontal, X } from 'lucide-react';
+import { RefreshCw, SearchX, SlidersHorizontal, X } from 'lucide-react';
 import RestaurantCard from '../components/RestaurantCard';
 import FoodCard from '../components/FoodCard';
 import FilterPanel, { DEFAULT_FILTERS } from '../components/FilterPanel';
@@ -8,10 +8,26 @@ import SortDropdown from '../components/SortDropdown';
 import SearchBar from '../components/SearchBar';
 import EmptyState from '../components/EmptyState';
 import { SkeletonFoodCard, SkeletonRestaurantCard } from '../components/LoadingSkeleton';
-import { useFakeLoading } from '../hooks/useFakeLoading';
-import { getAllFoods, restaurants } from '../data/restaurants';
+import { useFetch } from '../hooks/useFetch';
 import { categories, getCategory } from '../data/categories';
+import { restaurantApi } from '../api/restaurantApi';
+import { foodApi } from '../api/foodApi';
+import { mapRestaurant, mapFood } from '../api/normalizers';
 import { useSettings } from '../context/SettingsContext';
+
+/** Map the UI sort options to the backend's SORT_MAP keys. */
+const sortForServer = (sort) => {
+  switch (sort) {
+    case 'rating':
+      return 'rating';
+    case 'delivery':
+      return 'delivery-time';
+    case 'price-low':
+      return 'price';
+    default:
+      return 'relevance';
+  }
+};
 
 export default function RestaurantListingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -34,70 +50,58 @@ export default function RestaurantListingPage() {
     setSearchParams(next, { replace: false });
   };
 
-  const loading = useFakeLoading([q, categoryParam, sortParam, filters], 500);
+  // Server-driven filtering: the backend applies search/category/sort/rating/
+  // delivery-time/price/veg — the same rules the UI used to apply in-memory.
+  const { data, loading, error, refetch } = useFetch(
+    async () => {
+      const pureVeg = settings.vegMode || filters.pureVeg ? true : undefined;
+      const params = {
+        search: q || undefined,
+        category: categoryParam || undefined,
+        sort: sortParam === 'price-high' ? undefined : sortForServer(sortParam),
+        rating: filters.rating || undefined,
+        maxTime: filters.maxDelivery || undefined,
+        maxPrice:
+          filters.priceRange === 'low'
+            ? 300
+            : filters.priceRange === 'mid'
+              ? 600
+              : undefined,
+        pureVeg,
+      };
 
-  const { filtered, dishMatches } = useMemo(() => {
-    const ql = q.trim().toLowerCase();
-    const activeCategory = getCategory(categoryParam);
+      const [restaurantRes, foodRes] = await Promise.all([
+        restaurantApi.list(params),
+        q.trim()
+          ? foodApi.list({ search: q.trim() })
+          : Promise.resolve({ foods: [] }),
+      ]);
 
-    // Restaurants matching the search text (name / cuisine / area / dishes).
-    const searchMatches = (r) => {
-      if (!ql) return true;
-      const foodHits = r.menu.flatMap((s) =>
-        s.items.filter((it) => it.name.toLowerCase().includes(ql) || it.description.toLowerCase().includes(ql))
-      );
-      return (
-        r.name.toLowerCase().includes(ql) ||
-        r.cuisine.some((c) => c.toLowerCase().includes(ql)) ||
-        r.area.toLowerCase().includes(ql) ||
-        foodHits.length > 0
-      );
-    };
+      let list = (restaurantRes.restaurants || []).map(mapRestaurant);
 
-    // Dishes matching the query (shown in a horizontal strip).
-    const dishMatches = ql
-      ? getAllFoods()
-          .filter((f) => f.name.toLowerCase().includes(ql) || f.description.toLowerCase().includes(ql))
-          .filter((f) => (settings.vegMode ? f.veg : true))
-          .slice(0, 10)
-      : [];
-
-    let list = restaurants.filter(searchMatches);
-
-    // Category filter (from URL)
-    if (activeCategory) {
-      list = list.filter((r) => r.categories.includes(activeCategory.id));
-    }
-    // Veg mode
-    if (settings.vegMode) list = list.filter((r) => r.pureVeg);
-    // Panel filters
-    if (filters.rating) list = list.filter((r) => r.rating >= filters.rating);
-    if (filters.maxDelivery) list = list.filter((r) => r.deliveryMin <= filters.maxDelivery);
-    if (filters.priceRange === 'low') list = list.filter((r) => r.priceForTwo <= 300);
-    if (filters.priceRange === 'mid') list = list.filter((r) => r.priceForTwo > 300 && r.priceForTwo <= 600);
-    if (filters.priceRange === 'high') list = list.filter((r) => r.priceForTwo > 600);
-    if (filters.pureVeg) list = list.filter((r) => r.pureVeg);
-    if (filters.cuisines.length) list = list.filter((r) => r.cuisine.some((c) => filters.cuisines.includes(c)));
-
-    switch (sortParam) {
-      case 'rating':
-        list = [...list].sort((a, b) => b.rating - a.rating);
-        break;
-      case 'delivery':
-        list = [...list].sort((a, b) => a.deliveryMin - b.deliveryMin);
-        break;
-      case 'price-low':
-        list = [...list].sort((a, b) => a.priceForTwo - b.priceForTwo);
-        break;
-      case 'price-high':
+      // Client-side for the gaps the API doesn't cover: multi-cuisine,
+      // the lower bound of the mid/high price ranges, and price-high sort.
+      if (filters.cuisines.length) {
+        list = list.filter((r) => r.cuisine.some((c) => filters.cuisines.includes(c)));
+      }
+      if (filters.priceRange === 'mid') list = list.filter((r) => r.priceForTwo > 300);
+      if (filters.priceRange === 'high') list = list.filter((r) => r.priceForTwo > 600);
+      if (sortParam === 'price-high') {
         list = [...list].sort((a, b) => b.priceForTwo - a.priceForTwo);
-        break;
-      default:
-        break;
-    }
+      }
 
-    return { filtered: list, dishMatches };
-  }, [q, categoryParam, sortParam, filters, settings.vegMode]);
+      const dishMatches = (foodRes.foods || [])
+        .filter((f) => (settings.vegMode ? f.veg : true))
+        .slice(0, 10)
+        .map((f) => mapFood(f, f.restaurant));
+
+      return { list, dishMatches };
+    },
+    [q, categoryParam, sortParam, filters, settings.vegMode]
+  );
+
+  const filtered = data?.list || [];
+  const dishMatches = data?.dishMatches || [];
 
   const hasActiveFilters =
     Object.values(filters).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v))) ||
@@ -120,7 +124,7 @@ export default function RestaurantListingPage() {
               : 'All restaurants'}
         </h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          {filtered.length} restaurant{filtered.length !== 1 ? 's' : ''} near you
+          {loading ? 'Loading…' : `${filtered.length} restaurant${filtered.length !== 1 ? 's' : ''} near you`}
           {settings.vegMode && <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">Veg mode on</span>}
         </p>
       </div>
@@ -181,6 +185,17 @@ export default function RestaurantListingPage() {
           {loading ? (
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
               {[...Array(6)].map((_, i) => <SkeletonRestaurantCard key={i} />)}
+            </div>
+          ) : error ? (
+            <div className="rounded-2xl border border-dashed border-ember-300 bg-ember-50/50 p-10 text-center dark:border-ember-500/40 dark:bg-ember-500/10">
+              <p className="text-3xl">📡</p>
+              <p className="mt-2 font-display text-base font-bold text-zinc-900 dark:text-zinc-50">Couldn't load restaurants</p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500 dark:text-zinc-400">
+                {error.message}
+              </p>
+              <button onClick={refetch} className="btn-secondary mt-4 px-5 py-2.5 text-sm">
+                <RefreshCw size={15} /> Try again
+              </button>
             </div>
           ) : (
             <>

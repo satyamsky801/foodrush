@@ -6,9 +6,12 @@ import CouponBox from '../components/CouponBox';
 import PriceSummary from '../components/PriceSummary';
 import EmptyState from '../components/EmptyState';
 import AppImage from '../components/AppImage';
+import { useFetch } from '../hooks/useFetch';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
-import { getRestaurant } from '../data/restaurants';
+import { restaurantApi } from '../api/restaurantApi';
+import { couponApi } from '../api/couponApi';
+import { mapRestaurant } from '../api/normalizers';
 import { priceBreakdown } from '../utils/pricing';
 
 export default function CartPage() {
@@ -18,7 +21,26 @@ export default function CartPage() {
   const [couponCode, setCouponCode] = useState('');
   const [couponError, setCouponError] = useState('');
 
-  const restaurant = getRestaurant(cart.restaurantId);
+  // Fetch the restaurant so the banner, delivery fee and links are live.
+  const restaurantFetch = useFetch(
+    async () => {
+      if (!cart.restaurantSlug) return null;
+      const { restaurant } = await restaurantApi.getBySlug(cart.restaurantSlug);
+      return mapRestaurant(restaurant);
+    },
+    [cart.restaurantSlug],
+    { enabled: Boolean(cart.restaurantSlug) }
+  );
+
+  // Fallback so the bill still renders if the lookup fails (backend down).
+  const restaurant = restaurantFetch.data || {
+    id: cart.restaurantSlug,
+    name: cart.restaurantName,
+    image: cart.restaurantImage,
+    deliveryFee: 0,
+    freeDeliveryAbove: null,
+  };
+
   const breakdown = useMemo(
     () => priceBreakdown(cart, restaurant, couponCode),
     [cart, restaurant, couponCode]
@@ -38,14 +60,19 @@ export default function CartPage() {
     );
   }
 
-  const applyCoupon = (code) => {
-    const result = priceBreakdown(cart, restaurant, code);
-    if (result.error) {
-      setCouponError(result.error);
-      return;
-    }
+  // Coupon codes are validated by the backend — it decides validity + discount.
+  const applyCoupon = async (code) => {
     setCouponError('');
-    setCouponCode(code);
+    try {
+      await couponApi.validate({
+        code,
+        itemTotal: breakdown.total,
+        deliveryFee: breakdown.deliveryFee,
+      });
+      setCouponCode(code);
+    } catch (e) {
+      setCouponError(e.message);
+    }
   };
 
   const removeCoupon = () => {
@@ -77,7 +104,7 @@ export default function CartPage() {
         {/* Items */}
         <div className="space-y-5">
           {/* Restaurant banner */}
-          {restaurant && (
+          {restaurant.name && (
             <Link
               to={`/restaurant/${restaurant.id}`}
               className="flex items-center gap-3 rounded-2xl border border-zinc-100 bg-white p-3.5 shadow-card transition-all hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-brand-500/50"
@@ -102,7 +129,7 @@ export default function CartPage() {
 
           <p className="flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-500">
             <ShoppingBag size={14} />
-            You can add more items from {restaurant?.name || 'this restaurant'}.
+            You can add more items from {restaurant.name || 'this restaurant'}.
           </p>
         </div>
 
