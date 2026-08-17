@@ -11,6 +11,7 @@ import {
   acceptDelivery,
   getMyDeliveries,
   getDashboardStats,
+  getChartData,
 } from '../controllers/orderController.js';
 import { protect, restrictTo } from '../middleware/auth.js';
 
@@ -21,6 +22,7 @@ router.use(protect);
 
 // Dashboard stats (admin)
 router.get('/admin/dashboard', restrictTo('admin'), getDashboardStats);
+router.get('/admin/charts', restrictTo('admin'), getChartData);
 router.get('/admin/all', restrictTo('admin'), getAllOrders);
 
 // Restaurant owner

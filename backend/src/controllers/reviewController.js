@@ -82,3 +82,14 @@ export const getFoodReviews = asyncHandler(async (req, res) => {
     .lean();
   res.json({ success: true, count: reviews.length, reviews });
 });
+
+/** GET /api/reviews/admin/all — admin: every review with context */
+export const getAllReviews = asyncHandler(async (req, res) => {
+  const reviews = await Review.find()
+    .populate('user', 'name email')
+    .populate('restaurant', 'name slug image')
+    .populate('food', 'name')
+    .sort({ createdAt: -1 })
+    .lean();
+  res.json({ success: true, count: reviews.length, reviews });
+});

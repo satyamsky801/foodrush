@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronDown, LogOut, MapPin, Moon, ShoppingCart, Sun, UserRound } from 'lucide-react';
+import { ChevronDown, LayoutDashboard, LogOut, MapPin, Moon, ShoppingCart, Sun, UserRound } from 'lucide-react';
 import Logo from './Logo';
 import SearchBar from './SearchBar';
 import Modal from './Modal';
@@ -106,6 +106,11 @@ export default function Navbar() {
                   <Link to="/orders" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800">
                     <ShoppingCart size={16} className="text-zinc-400 dark:text-zinc-500" /> My Orders
                   </Link>
+                  {user.role === 'admin' && (
+                    <Link to="/admin" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                      <LayoutDashboard size={16} className="text-zinc-400 dark:text-zinc-500" /> Admin Dashboard
+                    </Link>
+                  )}
                   <button
                     onClick={() => {
                       setMenuOpen(false);

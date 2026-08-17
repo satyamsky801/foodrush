@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import authRoutes from './authRoutes.js';
+import userRoutes from './userRoutes.js';
 import categoryRoutes from './categoryRoutes.js';
 import restaurantRoutes from './restaurantRoutes.js';
 import foodRoutes from './foodRoutes.js';
@@ -12,6 +13,7 @@ const router = Router();
 
 router.get('/health', (req, res) => res.json({ success: true, status: 'ok', time: new Date().toISOString() }));
 router.use('/auth', authRoutes);
+router.use('/users', userRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/restaurants', restaurantRoutes);
 router.use('/foods', foodRoutes);

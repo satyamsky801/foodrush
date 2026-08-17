@@ -15,6 +15,7 @@ Order biryani, pizza, dosas and more from your favourite restaurants with live o
 | | |
 |---|---|
 | **Customer app** | 11 pages: home, search & filters, restaurant menu, food customisation, cart, checkout, live order tracking, profile, orders, login |
+| **Admin dashboard** | `/admin` — live stats & charts, users (role management), restaurants, foods, categories, coupons, order pipeline, reviews |
 | **Fully API-connected** | Restaurants, menus, auth, addresses, coupons, orders, tracking & reviews all read/write MongoDB through the Express API — no mock data in the UI |
 | **Dark mode** | Class-based Tailwind theme with a pre-paint script (no flash), follows your system preference |
 | **Coupons** | `WELCOME50` (50% off up to ₹100), `FOOD20` (20% off up to ₹150), `FREEDEL` (free delivery) — validated by the backend |
@@ -139,7 +140,14 @@ states with retry when the API is unreachable.
 | GET | `/api/orders/delivery/available` | Orders awaiting a delivery partner | delivery |
 | POST | `/api/orders/delivery/accept/:id` | Accept a delivery | delivery |
 | GET/POST | `/api/reviews` | List reviews / write one (after delivery) | ✅ |
+| GET | `/api/reviews/admin/all` | All reviews with context | admin |
+| GET | `/api/users/admin/all` | All users with order counts | admin |
+| PATCH/DELETE | `/api/users/:id` | Change role / delete user | admin |
+| GET | `/api/orders/admin/all` | All orders (+ pending/completed/revenue stats) | admin |
+| GET | `/api/orders/admin/charts` | Daily orders/revenue + popular foods & restaurants | admin |
 | POST | `/api/restaurants` · `/api/foods` | Admin CRUD for restaurants & foods | admin |
+| PATCH/DELETE | `/api/categories/:id` | Admin CRUD for categories | admin |
+| POST/PATCH/DELETE | `/api/coupons` | Admin CRUD for coupons | admin |
 
 ## 🧭 Roadmap
 
@@ -151,7 +159,7 @@ states with retry when the API is unreachable.
 - [x] **Phase 12 (API)** — Reviews with rating aggregation & delivered-order gate
 - [x] **Phase 13 (API)** — Automated endpoint test suite (`npm run test:api`, 65 checks)
 - [x] **Phase 4–5 (UI)** — Full API connection: real auth (JWT + refresh restore), restaurants, menus, addresses, coupons, orders, tracking & reviews
-- [ ] **Phase 6** — Admin dashboard (restaurant & food management, order pipeline)
+- [x] **Phase 6** — Admin dashboard at `/admin` (stats & charts, users, restaurants, foods, categories, coupons, order pipeline, reviews)
 - [ ] **Phase 7** — Restaurant owner dashboard
 - [ ] **Phase 8** — Payment gateway (UPI / cards / net-banking, keep COD)
 - [ ] **Phase 9** — Real-time tracking with Socket.IO
@@ -173,7 +181,13 @@ API: signup → search → restaurant → customised dish → cart → backend-v
 coupon → checkout with a MongoDB-persisted address → real order placement → live
 tracking → reorder → profile → logout → login again → refresh persistence, plus
 dark mode, reviews after delivery, and mobile layout (390px, no horizontal
-overflow, no console errors). 23/23 checks pass.
+overflow, no console errors). 10/10 checks pass.
+
+**Admin dashboard** — verified end-to-end in headless Chrome as `admin@foodrush.app`:
+dashboard stat cards & charts, users list, add-restaurant, foods & categories
+lists, add-category, coupons, orders, reviews, mobile layout (390px, no
+overflow), dark-mode toggle, and that non-admin users are redirected away from
+`/admin`. 19/19 checks pass with zero console errors.
 
 > Note: `npm run test:api` asserts on exact database state (e.g. "reviews empty",
 > "1 seeded address"), so restart the backend (fresh in-memory DB) before running

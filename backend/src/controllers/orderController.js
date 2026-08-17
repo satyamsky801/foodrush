@@ -309,6 +309,86 @@ export const getMyDeliveries = asyncHandler(async (req, res) => {
   res.json({ success: true, count: orders.length, orders });
 });
 
+/** GET /api/orders/admin/charts — admin: daily orders/revenue + popular items */
+export const getChartData = asyncHandler(async (req, res) => {
+  const days = 14;
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+  since.setDate(since.getDate() - (days - 1));
+
+  // Daily order + revenue series (last 14 days).
+  const daily = await Order.aggregate([
+    { $match: { createdAt: { $gte: since }, orderStatus: { $ne: 'cancelled' } } },
+    {
+      $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+        orders: { $sum: 1 },
+        revenue: { $sum: '$breakdown.grandTotal' },
+      },
+    },
+    { $sort: { _id: 1 } },
+  ]);
+
+  const series = [];
+  for (let i = 0; i < days; i += 1) {
+    const d = new Date(since);
+    d.setDate(since.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    const match = daily.find((x) => x._id === key);
+    series.push({
+      date: key,
+      label: d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+      orders: match?.orders || 0,
+      revenue: match?.revenue || 0,
+    });
+  }
+
+  // Popular foods by total quantity ordered (excluding cancelled).
+  const popularFoods = await Order.aggregate([
+    { $match: { orderStatus: { $ne: 'cancelled' } } },
+    { $unwind: '$items' },
+    {
+      $group: {
+        _id: '$items.name',
+        qty: { $sum: '$items.quantity' },
+        revenue: { $sum: { $multiply: ['$items.unitPrice', '$items.quantity'] } },
+      },
+    },
+    { $sort: { qty: -1 } },
+    { $limit: 6 },
+  ]);
+
+  // Popular restaurants by order count + revenue.
+  const popularRestaurants = await Order.aggregate([
+    { $match: { orderStatus: { $ne: 'cancelled' } } },
+    {
+      $group: {
+        _id: '$restaurant',
+        orders: { $sum: 1 },
+        revenue: { $sum: '$breakdown.grandTotal' },
+      },
+    },
+    { $sort: { orders: -1 } },
+    { $limit: 6 },
+  ]);
+  await Restaurant.populate(popularRestaurants, { path: '_id', select: 'name slug image' });
+
+  res.json({
+    success: true,
+    charts: {
+      daily: series,
+      popularFoods: popularFoods.map((p) => ({ name: p._id, qty: p.qty, revenue: p.revenue })),
+      popularRestaurants: popularRestaurants.map((p) => ({
+        name: p._id?.name || 'Unknown',
+        slug: p._id?.slug || '',
+        image: p._id?.image || '',
+        orders: p.orders,
+        revenue: p.revenue,
+      })),
+    },
+  });
+});
+
 /** GET /api/orders/admin/dashboard — admin summary numbers */
 export const getDashboardStats = asyncHandler(async (req, res) => {
   const [users, restaurants, orders, revenueAgg, statusCounts] = await Promise.all([
